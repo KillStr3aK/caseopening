@@ -14,6 +14,7 @@
 enum Case {
 	String:CaseName[32],
 	String:Unique_ID[32],
+	bool:bReqKey, //Not used yet
 	CaseID
 }
 
@@ -187,10 +188,8 @@ stock void CaseDetailsMenu(Jatekos jatekos, int caseid)
 {
 	char cLine[128];
 	Menu menu = CreateMenu(CaseDetails);
-	menu.SetTitle("Caseopening System - Case details\nYou've got %i keys for this case", PlayerInventory[jatekos.index][caseid][Keys]);
-	Format(cLine, sizeof(cLine), "Case name: %s", g_eCase[caseid][CaseName]);
-	menu.AddItem("", cLine, ITEMDRAW_DISABLED);
-	Format(cLine, sizeof(cLine), "Require key: YES");
+	menu.SetTitle("Caseopening System - Case details\nCase: %s\nYou've got %i keys for this case", g_eCase[caseid][CaseName], PlayerInventory[jatekos.index][caseid][Keys]);
+	Format(cLine, sizeof(cLine), "Require key: %s", g_eCase[caseid][bReqKey]?"YES":"NO");
 	menu.AddItem("", cLine, ITEMDRAW_DISABLED);
 	/*Format(cLine, sizeof(cLine), "This case contains the following items:");
 	menu.AddItem("", cLine, ITEMDRAW_DISABLED);
