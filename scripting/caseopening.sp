@@ -14,12 +14,13 @@
 enum Case {
 	String:CaseName[32],
 	String:Unique_ID[32],
-	bool:bReqKey, //Not used yet
+	bool:bReqKey,
 	CaseID
 }
 
 enum Item {
 	String:Name[32],
+	String:Unique[32],
 	String:Type[20],
 	String:Value[32],
 	String:Grade[10],
@@ -40,6 +41,10 @@ int m_iItems[MAX_CASES] = 0;
 int m_iCacheCase[MAXPLAYERS+1];
 int m_iPlayerID[MAXPLAYERS+1];
 int PlayerInventory[MAXPLAYERS+1][MAX_CASES][Inventory];
+int m_iSzam[MAXPLAYERS+1] = 0;
+int m_iOpenedItem[MAXPLAYERS+1] = -1;
+
+float m_fChance[MAXPLAYERS+1] = -1.0;
 
 bool m_bOpening[MAXPLAYERS+1] = false;
 
@@ -86,6 +91,9 @@ public void OnClientPostAdminCheck(int client)
 
 	m_iCacheCase[client] = 0;
 	m_iPlayerID[client] = 0;
+	m_iSzam[client] = 0;
+	m_iOpenedItem[client] = -1;
+	m_fChance[client] = -1.0;
 	m_bOpening[client] = false;
 
 	for (int i = 1; i < m_iCases; ++i)
@@ -252,7 +260,7 @@ public int ConfirmationCallback(Menu menu, MenuAction mAction, int client, int i
 		menu.GetItem(item, info, sizeof(info));
 		if(StrEqual(info, "yes"))
 		{
-			CreateTimer(0.1, OpenCase, client, TIMER_REPEAT);
+			Pre_OpenCase(view_as<Jatekos>(client));
 		} else if(StrEqual(info, "no"))
 		{
 			ListCases(view_as<Jatekos>(client));
@@ -263,31 +271,101 @@ public int ConfirmationCallback(Menu menu, MenuAction mAction, int client, int i
 	}
 }
 
+public void Pre_OpenCase(Jatekos jatekos)
+{
+	if(!(m_iItems[m_iCacheCase[jatekos.index]] > 0))
+	{
+		PrintToChat(jatekos.index, "This case haven't got any item yet.");
+		return;
+	}
+
+	m_iSzam[jatekos.index] = 0;
+	m_bOpening[jatekos.index] = true;
+	ManagePlayerInventory(jatekos);
+	CreateTimer(0.1, OpenCase, jatekos, TIMER_REPEAT);
+}
+
 public Action OpenCase(Handle timer, Jatekos jatekos)
 {
 	if(!jatekos.IsValid)
 		return Plugin_Stop;
 
+	if(m_fChance[jatekos.index] == -1.0) m_fChance[jatekos.index] = GetRandomFloat(GetLowestItemChance(m_iCacheCase[jatekos.index]), GetHighestItemChance(m_iCacheCase[jatekos.index]));
+	if(m_iOpenedItem[jatekos.index] == -1)
+	{
+		if(GetItemFromCase(jatekos, m_iCacheCase[jatekos.index]) != -1) m_iOpenedItem[jatekos.index] = GetItemFromCase(jatekos, m_iCacheCase[jatekos.index]);
+		else {
+			ManagePlayerInventory(jatekos, false);
+			PrintToChat(jatekos.index, "Something happend, Please contact the server owner or the plugin author. \x04ERRCODE: fOpenCase(%i-%i-%i)", m_iOpenedItem[jatekos.index], m_iCacheCase[jatekos.index], m_iPlayerID[jatekos.index]);
+			return Plugin_Stop;
+		}
+	}
+
 	char cPlayerName[MAX_NAME_LENGTH+1];
 	jatekos.GetName(cPlayerName, sizeof(cPlayerName));
 
-	static int szam[MAXPLAYERS+1] = 0;
 	int randomszam = GetRandomInt(0, m_iItems[m_iCacheCase[jatekos.index]]);
 
-	if (szam[jatekos.index] >= 100)
+	if (m_iSzam[jatekos.index] >= 100 && m_fChance[jatekos.index] > -1.0)
 	{
-		szam[jatekos.index] = 0;
-		PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eItem[m_iCacheCase[jatekos.index]][randomszam][Grade], g_eItem[m_iCacheCase[jatekos.index]][randomszam][Name]);
-		PrintToChatAll("%s \x04%s \x01has opened a case and found: %s", PREFIX, cPlayerName, g_eItem[m_iCacheCase[jatekos.index]][randomszam][Name]);
+		m_iSzam[jatekos.index] = 0;
+		PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade], g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Name]);
+		PrintToChat(jatekos.index, "%s \x04%s \x01has opened a case and found: %s item chance: %f player chance: %f", PREFIX, cPlayerName, g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Name], g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Chance], m_fChance[jatekos.index]);
+		PrintToChat(jatekos.index, "highest: %f lowest: %f", GetHighestItemChance(m_iCacheCase[jatekos.index]), GetLowestItemChance(m_iCacheCase[jatekos.index]));
 		
+		m_fChance[jatekos.index] = -1.0;
+		m_iOpenedItem[jatekos.index] = -1;
 		m_bOpening[jatekos.index] = false;
 		return Plugin_Stop;
 	}
 
-	PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eItem[m_iCacheCase[jatekos.index]][randomszam][Grade], g_eItem[m_iCacheCase[jatekos.index]][randomszam][Name]);
+	if(!StrEqual(g_eItem[m_iCacheCase[jatekos.index]][randomszam][Name], empty))
+		PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eItem[m_iCacheCase[jatekos.index]][randomszam][Grade], g_eItem[m_iCacheCase[jatekos.index]][randomszam][Name]);
 
-	szam[jatekos.index]++;			
+	m_iSzam[jatekos.index]++;			
 	return Plugin_Continue;
+}
+
+public int GetItemFromCase(Jatekos jatekos, int caseid)
+{
+	int m_iItem = 0;
+	for (int i = 0; i < m_iItems[caseid]; ++i)
+	{
+		if(g_eItem[caseid][i][ParentCase] != caseid) continue;
+
+		if(g_eItem[caseid][i][Chance] >= m_fChance[jatekos.index]){
+			if(g_eItem[caseid][i][Chance] < g_eItem[caseid][m_iItem][Chance])
+				m_iItem = GetItemFromUnique(caseid, g_eItem[caseid][i][Unique]);
+		}
+	}
+
+	return m_iItem;
+}
+
+stock void ManagePlayerInventory(Jatekos jatekos, bool del = true)
+{
+	if(!jatekos.IsValid) return;
+
+	char Query[1024];
+
+	if(del)
+	{
+		Format(Query, sizeof(Query), "DELETE FROM case_inventory WHERE unique_id = '%i' AND type = 'case' AND caseid = '%i' LIMIT 1", m_iPlayerID[jatekos.index], m_iCacheCase[jatekos.index]);
+		SQL_TQuery(g_DB, SQLHibaKereso, Query);
+
+		if(g_eCase[m_iCacheCase[jatekos.index]][bReqKey]) {
+			Format(Query, sizeof(Query), "DELETE FROM case_inventory WHERE unique_id = '%i' AND type = 'key' AND caseid = '%i' LIMIT 1", m_iPlayerID[jatekos.index], m_iCacheCase[jatekos.index]);
+			SQL_TQuery(g_DB, SQLHibaKereso, Query);
+		}
+	} else if(!del){
+		Format(Query, sizeof(Query), "INSERT INTO `case_inventory` (`ID`, `unique_id`, `type`, `caseid`) VALUES (NULL, '%i', 'case', '%i');", m_iPlayerID[jatekos.index], m_iCacheCase[jatekos.index]);
+		SQL_TQuery(g_DB, SQLHibaKereso, Query);
+
+		if(g_eCase[m_iCacheCase[jatekos.index]][bReqKey]) {
+			Format(Query, sizeof(Query), "INSERT INTO `case_inventory` (`ID`, `unique_id`, `type`, `caseid`) VALUES (NULL, '%i', 'key', '%i');", m_iPlayerID[jatekos.index], m_iCacheCase[jatekos.index]);
+			SQL_TQuery(g_DB, SQLHibaKereso, Query);
+		}
+	}
 }
 
 public Action Command_Refresh(int client, int args)
@@ -393,6 +471,7 @@ public void GetItemsFromDB(Handle owner, Handle hndl, const char[] error, int ca
 {
 	while (SQL_FetchRow(hndl)) {
 		SQL_FetchString(hndl, 1, g_eItem[caseid][m_iItems[caseid]][Name], 32);
+		SQL_FetchString(hndl, 2, g_eItem[caseid][m_iItems[caseid]][Unique], 32);
 		SQL_FetchString(hndl, 3, g_eItem[caseid][m_iItems[caseid]][Type], 20);
 		SQL_FetchString(hndl, 4, g_eItem[caseid][m_iItems[caseid]][Value], 32);
 		SQL_FetchString(hndl, 6, g_eItem[caseid][m_iItems[caseid]][Grade], 10);
@@ -467,6 +546,51 @@ stock int GetCaseIdFromUnique(char[] unique)
 	}
 
 	return -1;
+}
+
+stock int GetItemFromUnique(int caseid, char[] unique)
+{
+	for (int i = 0; i < m_iItems[caseid]; ++i)
+	{
+		if(g_eItem[caseid][i][ParentCase] != caseid) continue;
+
+		if(StrEqual(g_eItem[caseid][i][Unique], unique))
+			return i;
+	}
+
+	return -1;
+}
+
+stock float GetHighestItemChance(int caseid)
+{
+	float chance = 2.0;
+	for (int i = 0; i < m_iItems[caseid]; ++i)
+	{
+		if(g_eItem[caseid][i][ParentCase] != caseid) continue;
+
+		if(g_eItem[caseid][i][Chance] > chance)
+			chance = g_eItem[caseid][i][Chance];
+	}
+
+	if(chance > 1.0) chance = 1.0;
+
+	return chance;
+}
+
+stock float GetLowestItemChance(int caseid)
+{
+	float chance = -2.0;
+	for (int i = 0; i < m_iItems[caseid]; ++i)
+	{
+		if(g_eItem[caseid][i][ParentCase] != caseid) continue;
+
+		if(g_eItem[caseid][i][Chance] < chance)
+			chance = g_eItem[caseid][i][Chance];
+	}
+
+	if(chance < 0.0) chance = 0.0;
+
+	return chance;
 }
 
 stock bool IsOpening(Jatekos jatekos)
