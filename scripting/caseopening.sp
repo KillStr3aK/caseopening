@@ -4,7 +4,7 @@
 #define PLUGIN_NEV	"Caseopening system"
 #define PLUGIN_LERIAS	"(8_8)"
 #define PLUGIN_AUTHOR	"Nexd"
-#define PLUGIN_VERSION	"1.0.1010"
+#define PLUGIN_VERSION	"1.0.1011"
 #define PLUGIN_URL	"https://github.com/KillStr3aK"
 
 #define MAX_CASES 10
@@ -563,7 +563,7 @@ stock int GetItemFromUnique(int caseid, char[] unique)
 
 stock float GetHighestItemChance(int caseid)
 {
-	float chance = 2.0;
+	float chance = 0.0;
 	for (int i = 0; i < m_iItems[caseid]; ++i)
 	{
 		if(g_eItem[caseid][i][ParentCase] != caseid) continue;
@@ -572,14 +572,14 @@ stock float GetHighestItemChance(int caseid)
 			chance = g_eItem[caseid][i][Chance];
 	}
 
-	if(chance > 1.0) chance = 1.0;
+	if(chance == 0.0) chance = 1.0;
 
 	return chance;
 }
 
 stock float GetLowestItemChance(int caseid)
 {
-	float chance = -2.0;
+	float chance = 1.0;
 	for (int i = 0; i < m_iItems[caseid]; ++i)
 	{
 		if(g_eItem[caseid][i][ParentCase] != caseid) continue;
@@ -588,7 +588,7 @@ stock float GetLowestItemChance(int caseid)
 			chance = g_eItem[caseid][i][Chance];
 	}
 
-	if(chance < 0.0) chance = 0.0;
+	if(chance == 1.0) chance = 0.0;
 
 	return chance;
 }
