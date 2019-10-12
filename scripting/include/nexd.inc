@@ -95,6 +95,34 @@ stock void RemovePlayerKnife(int client) {
 	}
 }
 
+stock GetLegacyAuthString(int client, char[] out, int maxlen, bool validate = true)
+{
+	char m_szSteamID[32];
+	bool success = GetClientAuthId(client, AuthId_Steam2, m_szSteamID, sizeof(m_szSteamID), validate);
+
+	if(m_szSteamID[0]=='[')
+	{
+		new m_unAccountID = StringToInt(m_szSteamID[5]);
+		new m_unMod = m_unAccountID % 2;
+		Format(out, maxlen, "STEAM_0:%d:%d", m_unMod, (m_unAccountID-m_unMod)/2);
+	} else {
+		strcopy(out, maxlen, m_szSteamID);
+	}
+
+	return success;
+}
+
+stock bool IsInteger(char[] buffer)
+{
+    for (int i = 0; i < strlen(buffer); i++)
+    {
+        if ( !IsCharNumeric(buffer[i]) )
+            return false;
+    }
+
+    return true;    
+}
+
 stock bool HasWeapon(int client, const char[] className)
 {
 	return (Client_GetWeapon(client, className) != INVALID_ENT_REFERENCE);
@@ -282,6 +310,18 @@ stock int GetAliveClient()
 	return 0;
 }
 
+stock int GetAliveClientFromTeam(int team)
+{
+	for (int i = 1; i <= MaxClients; i++)
+	{
+		if(IsClientInGame(i) && IsPlayerAlive(i) && !IsFakeClient(i) && GetClientTeam(i) == team)
+		{
+			return i;
+		}
+	}
+	return 0;
+}
+
 stock int GetAliveClientsCountTeam(int team)
 {
 	int j = 0;
@@ -347,10 +387,9 @@ stock int GetRandomPlayer()
 
 	for(int i=1; i<=MaxClients; i++)
 	{
-	    if(IsClientInGame(i) && i > 1)
-	    {
-	        jatekosok[jatekosszam++] = i;
-	    }
+	    if(!IsValidClient(i)) continue;
+
+	    jatekosok[jatekosszam++] = i;
 	}
 
 	randomjatekos = jatekosok[GetRandomInt(0, jatekosszam-1)];
@@ -506,7 +545,7 @@ stock bool IsModelEquipped(int client, const char[] modellname)
 stock bool IsStrContains(char[] String, char[] Text, bool caseSensitive = false)
 {
 	if((StrContains(String, Text, caseSensitive) != -1))
-		return true
+		return true;
 
 	return false;
 }
@@ -528,6 +567,63 @@ stock GetPercent(number, count)
 stock void SetPlayerColor(int client, int colors[3])
 {
     SetEntityRenderColor(client, colors[0], colors[1], colors[2], 255);
+}
+
+stock bool RemoveMapPath(const char[] map, char[] destination, int maxlen)
+{
+	if (strlen(map) < 1)
+	{
+		ThrowError("Bad map name: %s", map);
+	}
+	
+	int pos = FindCharInString(map, '/', true);
+	if (pos == -1)
+	{
+		pos = FindCharInString(map, '\\', true);
+		if (pos == -1)
+		{
+			strcopy(destination, maxlen, map);
+			return false;
+		}
+	}
+
+	int len = strlen(map) - 1 - pos;
+	
+	SubString(map, pos + 1, len, destination, maxlen);
+	return true;
+}
+
+stock bool SubString(const char[] source, int start, int len, char[] destination, int maxlen)
+{
+	if (maxlen < 1)
+	{
+		ThrowError("Destination size must be 1 or greater, but was %d", maxlen);
+	}
+	
+	if (len == 0)
+	{
+		destination[0] = '\0';
+		return true;
+	}
+	
+	if (start < 0)
+	{
+		start = strlen(source) + start;
+		if (start < 0)
+			start = 0;
+	}
+	
+	if (len < 0)
+	{
+		len = strlen(source) + len - start;
+		if (len < 0)
+			return false;
+	}
+	
+	int realLength = len + 1 < maxlen ? len + 1 : maxlen;
+	
+	strcopy(destination, realLength, source[start]);
+	return true;
 }
 
 stock bool IsLookingAtWall(int client, float distance=40.0) {
@@ -566,6 +662,84 @@ stock bool IsLookingAtWall(int client, float distance=40.0) {
 public bool LookingWall_TraceEntityFilter(int entity, int contentsMask)
 {
 	return entity == 0;
+}
+
+stock void FakePrecacheSound(const char[] szPath)
+{
+	AddToStringTable(FindStringTable("soundprecache"), szPath);
+}
+
+stock bool SafeRemoveWeapon(int client, int weapon, int slot)
+{
+    if (HasEntProp(weapon, Prop_Send, "m_iItemDefinitionIndex"))
+    {
+        int iDefIndex = GetEntProp(weapon, Prop_Send, "m_iItemDefinitionIndex");
+       
+        if (iDefIndex < 0 || iDefIndex > 700)
+        {
+            return false;
+        }
+    }
+   
+    if (HasEntProp(weapon, Prop_Send, "m_bInitialized"))
+    {
+        if (GetEntProp(weapon, Prop_Send, "m_bInitialized") == 0)
+        {
+            return false;
+        }
+    }
+   
+    if (HasEntProp(weapon, Prop_Send, "m_bStartedArming"))
+    {
+        if (GetEntSendPropOffs(weapon, "m_bStartedArming") > -1)
+        {
+            return false;
+        }
+    }
+   
+    if (GetPlayerWeaponSlot(client, slot) != weapon)
+    {
+        return false;
+    }
+   
+    if (!RemovePlayerItem(client, weapon))
+    {
+        return false;
+    }
+   
+    int iWorldModel = GetEntPropEnt(weapon, Prop_Send, "m_hWeaponWorldModel");
+   
+    if (IsValidEdict(iWorldModel) && IsValidEntity(iWorldModel))
+    {
+        if (!AcceptEntityInput(iWorldModel, "Kill"))
+        {
+            return false;
+        }
+    }
+   
+    if (weapon == GetEntPropEnt(client, Prop_Send, "m_hActiveWeapon"))
+    {
+        SetEntPropEnt(client, Prop_Send, "m_hActiveWeapon", -1);
+    }
+   
+    AcceptEntityInput(weapon, "Kill");
+   
+    return true;
+}
+
+/**
+ * Copies a 1 dimensional static array.
+ *
+ * @param array			Static Array to copy from.
+ * @param newArray		New Array to copy to.
+ * @param size			Size of the array (or number of cells to copy)
+ * @noreturn
+ */
+stock void Array_Copy(const any[] array, any[] newArray, int size)
+{
+	for (int i=0; i < size; i++) {
+		newArray[i] = array[i];
+	}
 }
 
 methodmap Jatekos
