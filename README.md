@@ -27,7 +27,7 @@
 * **sm_givecase** - Give case to a player
 
 ### Known bugs:
-* Sometimes the drop command is not works as intented
+* Sometimes the drop command is not works as intended
 * Not precached models can crash the server && players
 
 ## What will be added after the first release?
