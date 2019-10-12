@@ -4,7 +4,11 @@
 #define _caseopening_included
 
 native int Case_RegisterModule(char[] type, bool valuetype = true, Function:fOpened);
-native bool Case_IsInventoryLoaded(Jatekos jatekos)
+native bool Case_IsInventoryLoaded(Jatekos jatekos);
+native bool Case_IsBanned(Jatekos jatekos);
+
+forward void Case_OnCaseOpened(int client, char[] type, char[] value);
+forward void Case_OnClientBanned(int admin, int target);
 
 public SharedPlugin __caseopening = 
 {

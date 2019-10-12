@@ -1,17 +1,19 @@
 #include <sourcemod>
+#include <multicolors>
 #include <caseopening>
 #include <nexd>
 
 #define PLUGIN_NEV	"Caseopening system"
 #define PLUGIN_LERIAS	"(8_8)"
 #define PLUGIN_AUTHOR	"Nexd"
-#define PLUGIN_VERSION	"1.0.1011"
+#define PLUGIN_VERSION	"1.0.1012pre"
 #define PLUGIN_URL	"https://github.com/KillStr3aK"
 
-#define MAX_CASES 10
-#define MAX_CASE_SPAWN 10
-#define MAX_ITEMS 16
+#define MAX_CASES 32
+#define MAX_CASE_SPAWN 128
+#define MAX_ITEMS 24
 #define MAX_MODULES 64
+#define MAX_GRADES 12
 #pragma tabsize 0
 
 enum Case {
@@ -19,7 +21,7 @@ enum Case {
 	String:Unique_ID[32],
 	String:Model[PLATFORM_MAX_PATH],
 	bool:bReqKey,
-	CaseID
+	mCaseID
 }
 
 enum SpawnedCase {
@@ -38,9 +40,16 @@ enum Item {
 	String:Unique[32],
 	String:Type[32],
 	String:Value[32],
-	String:Grade[10],
+	String:Grade[32],
 	Float:Chance,
 	ParentCase
+}
+
+enum Grades {
+	String:g_uName[32],
+	String:cColor[12],
+	String:rColor[12],
+	String:Sound[PLATFORM_MAX_PATH]
 }
 
 enum Inventory {
@@ -56,10 +65,19 @@ enum Module_Handler
 	Function:fOpened
 }
 
+enum {
+	OnCaseOpened,
+	OnClientBanned,
+	m_iForwards
+}
+
 int g_eCase[MAX_CASES][Case];
 int g_eItem[MAX_CASES][MAX_ITEMS][Item];
+int g_eGrade[MAX_GRADES][Grades];
+
 int m_iCases = 1;
 int m_iItems[MAX_CASES] = 0;
+int m_iGrades = 0;
 
 int m_iCacheCase[MAXPLAYERS+1];
 int m_iPlayerID[MAXPLAYERS+1];
@@ -84,6 +102,7 @@ bool m_bLoaded[MAXPLAYERS+1][Inventory];
 
 char m_cChanceDetails[128];
 char m_cDropSound[PLATFORM_MAX_PATH];
+char m_cPrefix[64];
 
 enum {
 	CEnum_Config,
@@ -96,8 +115,12 @@ enum {
 	CEnum_PickUp,
 	CEnum_CaseSpawn,
 	CEnum_OffsetFloat,
+	CEnum_ChatPrefix,
+	CEnum_RotateCase,
 	Count
 }
+
+Handle Forwards[m_iForwards] = INVALID_HANDLE;
 
 Database g_DB;
 ConVar g_cR[Count];
@@ -109,8 +132,9 @@ ConVar g_cR[Count];
 #include "case_modules/store_trails.sp"
 #include "case_modules/store_paintball.sp"
 #include "case_modules/store_hats.sp"
+#include "case_modules/store_aura.sp"
 
-#include "case_modules/vipsystem.sp" // https://github.com/KillStr3aK/csgo-vipsystem Comment this line out if you dont want to use it.
+#include "case_modules/vipsystem.sp" // requires https://github.com/KillStr3aK/csgo-vipsystem Comment this line out if you dont want to use it.
 
 #pragma newdecls required;
 
@@ -125,12 +149,16 @@ public Plugin myinfo =
 
 public void OnPluginStart()
 {
-	RegAdminCmd("sm_cases", Command_Cases, ADMFLAG_ROOT);
+	RegConsoleCmd("sm_cases", Command_Cases);
+
 	RegAdminCmd("sm_refreshcases", Command_Refresh, ADMFLAG_ROOT);
 	RegAdminCmd("sm_loadinv", Command_Loadinv, ADMFLAG_ROOT);
 
 	RegAdminCmd("sm_caseban", Command_BanPlayer, ADMFLAG_ROOT);
 	RegAdminCmd("sm_drop", Command_Drop, ADMFLAG_ROOT);
+
+	RegAdminCmd("sm_givekey", Command_GiveKey, ADMFLAG_ROOT);
+	RegAdminCmd("sm_givecase", Command_GiveCase, ADMFLAG_ROOT);
 
 	g_cR[CEnum_Config] = CreateConVar("case_database", "ladarendszer", "databases.cfg section name");
 	g_cR[CEnum_Debug] = CreateConVar("case_debug", "0", "debug mode");
@@ -144,6 +172,9 @@ public void OnPluginStart()
 	g_cR[CEnum_PickUp] = CreateConVar("case_pickup", "1", "Enable case pickups");
 	g_cR[CEnum_CaseSpawn] = CreateConVar("case_pickup_minplayer", "1", "Minimum players for cases to spawn");
 	g_cR[CEnum_OffsetFloat] = CreateConVar("case_pickup_offset", "30.0");
+	g_cR[CEnum_RotateCase] = CreateConVar("case_pickup_rotate", "1", "Rotate cases?");
+
+	g_cR[CEnum_ChatPrefix] = CreateConVar("case_chat_prefix", "{default}[{lightred}Case-System{default}]", "Chat prefix for messages");
 
 	HookEvent("round_start", Event_RoundStart);
 	HookEvent("cs_intermission", Event_EndMatch);
@@ -156,12 +187,17 @@ public void OnPluginStart()
 	StorePaintballOnPluginStart();
 	StoreHatsOnPluginStart();
 	VipSystemOnPluginStart();
+	StoreAuraOnPluginStart();
 }
 
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
 {
 	CreateNative("Case_RegisterModule", Native_RegisterModule);
 	CreateNative("Case_IsInventoryLoaded", Native_IsInventoryLoaded);
+	CreateNative("Case_IsBanned", Native_IsBanned);
+
+	Forwards[OnCaseOpened] = CreateGlobalForward("Case_OnCaseOpened", ET_Ignore, Param_Cell, Param_String, Param_String);
+	Forwards[OnClientBanned] = CreateGlobalForward("Case_OnClientBanned", ET_Ignore, Param_Cell, Param_Cell);
 	
 	return APLRes_Success;
 }
@@ -226,22 +262,118 @@ public Action Command_Cases(int client, int args)
 		{
 			if(IsInventoryLoaded(Jatekos(client))) CaseMenu(Jatekos(client));
 			else {
-				PrintToChat(client, "Your inventory isn't fetched yet, please try it again later");
-				LoadPlayerInventory(Jatekos(client));
+				CPrintToChat(client, "%s Your inventory isn't fetched yet, please wait a bit.", m_cPrefix);
+				if(m_iPlayerID[client] > 0) LoadPlayerInventory(Jatekos(client));
 			}
 		} else {
-			PrintToChat(client, " \x07You can't access the menu while opening a case.");
+			CPrintToChat(client, "%s \x07You can't access the menu while opening a case.", m_cPrefix);
 		}
 	} else {
-		PrintToChat(client, " \x07You have an active ban from the system.");
+		CPrintToChat(client, "%s \x07You have an active ban from the system.", m_cPrefix);
 	}
+
+	return Plugin_Handled;
+}
+
+public Action Command_GiveCase(int client, int args)
+{
+	if(args != 2)
+	{
+		CPrintToChat(client, "%s Usage: !givecase target caseid", m_cPrefix);
+		return Plugin_Handled;
+	}
+
+	char cArgs[2][MAX_NAME_LENGTH+1];
+	GetCmdArg(1, cArgs[0], sizeof(cArgs[]));
+	GetCmdArg(2, cArgs[1], sizeof(cArgs[]));
+
+	if(!view_as<Jatekos>(FindTarget(client, cArgs[0], true)).IsValid){
+		CPrintToChat(client, "%s Invalid target", m_cPrefix);
+		return Plugin_Handled;
+	}
+
+	if(!IsValidCase(StringToInt(cArgs[1])))
+	{
+		CPrintToChat(client, "%s Invalid case", m_cPrefix);
+		return Plugin_Handled;
+	}
+
+	if(m_iPlayerID[FindTarget(client, cArgs[0], true)] <= 0)
+	{
+		CPrintToChat(client, "%s The targeted player haven't got ID", m_cPrefix);
+		return Plugin_Handled;
+	}
+
+	if(!IsInventoryLoaded(view_as<Jatekos>(FindTarget(client, cArgs[0], true))))
+	{
+		CPrintToChat(client, "%s %N inventory isn't fetched", m_cPrefix, FindTarget(client, cArgs[0], true));
+		return Plugin_Handled;
+	}
+
+	char Query[1024];
+	Format(Query, sizeof(Query), "INSERT INTO `case_inventory` (`ID`, `unique_id`, `type`, `caseid`) VALUES (NULL, '%i', 'case', '%i');", m_iPlayerID[FindTarget(client, cArgs[0], true)], StringToInt(cArgs[1]));
+	SQL_TQuery(g_DB, SQLHibaKereso, Query);
+
+	CPrintToChat(client, "%s You have given %N a %s", m_cPrefix, FindTarget(client, cArgs[0], true), g_eCase[StringToInt(cArgs[1])][Name]);
+
+	return Plugin_Handled;
+}
+
+public Action Command_GiveKey(int client, int args)
+{
+	if(args != 2)
+	{
+		CPrintToChat(client, "%s Usage: !givekey target caseid", m_cPrefix);
+		return Plugin_Handled;
+	}
+
+	char cArgs[2][MAX_NAME_LENGTH+1];
+	GetCmdArg(1, cArgs[0], sizeof(cArgs[]));
+	GetCmdArg(2, cArgs[1], sizeof(cArgs[]));
+
+	if(!view_as<Jatekos>(FindTarget(client, cArgs[0], true)).IsValid){
+		CPrintToChat(client, "%s Invalid target", m_cPrefix);
+		return Plugin_Handled;
+	}
+
+	if(!IsValidCase(StringToInt(cArgs[1])))
+	{
+		CPrintToChat(client, "%s Invalid case", m_cPrefix);
+		return Plugin_Handled;
+	}
+
+	if(m_iPlayerID[FindTarget(client, cArgs[0], true)] <= 0)
+	{
+		CPrintToChat(client, "%s The targeted player haven't got ID", m_cPrefix);
+		return Plugin_Handled;
+	}
+
+	if(!IsInventoryLoaded(view_as<Jatekos>(FindTarget(client, cArgs[0], true))))
+	{
+		CPrintToChat(client, "%s %N inventory isn't fetched", m_cPrefix, FindTarget(client, cArgs[0], true));
+		return Plugin_Handled;
+	}
+
+	char Query[1024];
+	Format(Query, sizeof(Query), "INSERT INTO `case_inventory` (`ID`, `unique_id`, `type`, `caseid`) VALUES (NULL, '%i', 'key', '%i');", m_iPlayerID[FindTarget(client, cArgs[0], true)], StringToInt(cArgs[1]));
+	SQL_TQuery(g_DB, SQLHibaKereso, Query);
+
+	CPrintToChat(client, "%s You have given %N a key for the %s", m_cPrefix, FindTarget(client, cArgs[0], true), g_eCase[StringToInt(cArgs[1])][Name]);
 
 	return Plugin_Handled;
 }
 
 public Action Command_Loadinv(int client, int args)
 {
-	LoadPlayerInventory(Jatekos(client));
+	if(args != 1){
+		LoadPlayerInventory(Jatekos(client));
+		CPrintToChat(client, "%s Your inventory has been fetched.", m_cPrefix);
+	}
+
+	char cArgs[MAX_NAME_LENGTH+1];
+	GetCmdArg(1, cArgs, sizeof(cArgs));
+	LoadPlayerInventory(view_as<Jatekos>(FindTarget(client, cArgs, true)));
+	CPrintToChat(client, "%s %N's inventory has been fetched.", m_cPrefix, FindTarget(client, cArgs, true));
 }
 
 public Action Command_Drop(int client, int args)
@@ -249,9 +381,7 @@ public Action Command_Drop(int client, int args)
 	Jatekos jatekos = view_as<Jatekos>(GetRandomPlayer());
 	int caseid = GetRandomCase();
 	Case_GiveCase(jatekos, caseid);
-	char cPlayerName[MAX_NAME_LENGTH+1];
-	jatekos.GetName(cPlayerName, sizeof(cPlayerName));
-	PrintToChatAll("%s has got a %s as a drop!", cPlayerName, g_eCase[caseid][Name]);
+	CPrintToChatAll("%s \x04%N \x01has got a \x0B%s \x01as a drop!", m_cPrefix, jatekos.index, g_eCase[caseid][Name]);
 	return Plugin_Continue;
 }
 
@@ -259,7 +389,7 @@ public Action Command_BanPlayer(int client, int args)
 {
 	if(args != 1)
 	{
-		PrintToChat(client, "Usage: !caseban targetname");
+		CPrintToChat(client, "%s Usage: !caseban targetname", m_cPrefix);
 		return Plugin_Handled;
 	}
 
@@ -268,11 +398,15 @@ public Action Command_BanPlayer(int client, int args)
 
 	if (!view_as<Jatekos>(FindTarget(client, cArgs, true)).IsValid)
 	{
-		PrintToChat(client, "Invalid target", PREFIX);
+		CPrintToChat(client, "%s Invalid target", m_cPrefix);
 		return Plugin_Handled;
 	}
 
 	Case_BanPlayer(view_as<Jatekos>(FindTarget(client, cArgs, true)));
+	Call_StartForward(Forwards[OnCaseOpened]);
+	Call_PushCell(client);
+	Call_PushCell(FindTarget(client, cArgs, true));
+	Call_Finish();
 
 	return Plugin_Handled;
 }
@@ -292,12 +426,12 @@ public void Case_BanPlayer(Jatekos jatekos)
 	if(!IsBanned(jatekos))
 	{
 		Format(Query, sizeof(Query), "UPDATE `case_players` SET `banned` = 1, `playername` = '%s' WHERE `case_players`.`steamid` = '%s';", cPlayerNameEscaped, cSteamID);
-		PrintToChatAll(" \x07%s has been banned from the caseopening system.", cPlayerName);
+		CPrintToChatAll("%s \x07%s has been banned from the caseopening system.", m_cPrefix, cPlayerName);
 
 		m_bBanned[jatekos.index] = true;
 	} else {
 		Format(Query, sizeof(Query), "UPDATE `case_players` SET `banned` = 0, `playername` = '%s' WHERE `case_players`.`steamid` = '%s';", cPlayerNameEscaped, cSteamID);
-		PrintToChatAll(" \x04%s has been unbanned from the caseopening system.", cPlayerName);
+		CPrintToChatAll("%s \x04%s has been unbanned from the caseopening system.", m_cPrefix, cPlayerName);
 
 		m_bBanned[jatekos.index] = false;
 	}
@@ -368,6 +502,8 @@ public void CaseMenu(Jatekos jatekos)
 	else menu.AddItem("", "Cases", ITEMDRAW_DISABLED);
 	if(CheckCommandAccess(jatekos.index, "sm_rootflag", ADMFLAG_ROOT)) menu.AddItem("admin", "ADMIN");
 	else menu.AddItem("", "ADMIN", ITEMDRAW_DISABLED);
+	menu.AddItem("", "", ITEMDRAW_SPACER);
+	menu.AddItem("ver", "Version");
 	menu.Display(jatekos.index, MENU_TIME_FOREVER);
 }
 
@@ -379,10 +515,14 @@ public int MainMenu(Menu menu, MenuAction mAction, int client, int item)
 		menu.GetItem(item, info, sizeof(info));
 		if(StrEqual(info, "cases"))
 		{
+			LoadPlayerInventory(view_as<Jatekos>(client));
 			ListCases(Jatekos(client));
 		} else if(StrEqual(info, "admin"))
 		{
 			Case_AdminMenu(view_as<Jatekos>(client), 1);
+		} else if(StrEqual(info, "ver"))
+		{
+			Case_VersionMenu(Jatekos(client));
 		}
 	}
 }
@@ -396,7 +536,7 @@ public void ListCases(Jatekos jatekos)
 	{
 		for (int i = 1; i < m_iCases; ++i)
 		{
-			if(g_eCase[i][CaseID] == 0) continue;
+			if(g_eCase[i][mCaseID] == 0) continue;
 			menu.AddItem(g_eCase[i][Unique_ID], g_eCase[i][CaseName]);
 		}
 	} else {
@@ -417,14 +557,14 @@ public int SelectCase(Menu menu, MenuAction mAction, int client, int item)
 		{
 			m_iCacheCase[client] = GetCaseIdFromUnique(cUID);
 			if(VerifyCaseItems(m_iCacheCase[client]) != -1) CaseDetailsMenu(Jatekos(client), m_iCacheCase[client]);
-			else PrintToChat(client, "Something happend, Please contact the server owner or the plugin author. \x07ERRCODE: SelectCase.VerifyCaseItems(%i-%i-%i)", m_iCacheCase[client], -1, m_iPlayerID[client]);
+			else CPrintToChat(client, "%s Something happend, Please contact the server owner or the plugin author. \x07ERRCODE: SelectCase.VerifyCaseItems(%i-%i-%i)", m_cPrefix, m_iCacheCase[client], -1, m_iPlayerID[client]);
 			for (int i = 0; i < m_iItems[GetCaseIdFromUnique(cUID)]; ++i)
 			{
 				if(g_eItem[m_iCacheCase[client]][i][ParentCase] != GetCaseIdFromUnique(cUID)) continue;
-				if(g_cR[CEnum_Debug].BoolValue) PrintToChat(client, "\x04%i \x07%s \x10%s \x5%s \x0E%s \x0C%f \x0B%i \x09%i \x03%s", g_eItem[m_iCacheCase[client]][i][ParentCase], g_eItem[m_iCacheCase[client]][i][Name], g_eItem[m_iCacheCase[client]][i][Type], g_eItem[m_iCacheCase[client]][i][Value], g_eItem[m_iCacheCase[client]][i][Grade], g_eItem[m_iCacheCase[client]][i][Chance], PlayerInventory[client][m_iCacheCase[client]][Cases], PlayerInventory[client][m_iCacheCase[client]][Keys], g_eCase[m_iCacheCase[client]][bReqKey]?"yes":"no");
+				if(g_cR[CEnum_Debug].BoolValue) CPrintToChat(client, "%s \x04%i \x07%s \x10%s \x5%s \x0E%s \x0C%f \x0B%i \x09%i \x03%s", m_cPrefix, g_eItem[m_iCacheCase[client]][i][ParentCase], g_eItem[m_iCacheCase[client]][i][Name], g_eItem[m_iCacheCase[client]][i][Type], g_eItem[m_iCacheCase[client]][i][Value], g_eItem[m_iCacheCase[client]][i][Grade], g_eItem[m_iCacheCase[client]][i][Chance], PlayerInventory[client][m_iCacheCase[client]][Cases], PlayerInventory[client][m_iCacheCase[client]][Keys], g_eCase[m_iCacheCase[client]][bReqKey]?"yes":"no");
 			}
 		} else {
-			if(g_cR[CEnum_Debug].BoolValue) PrintToChat(client, "-1");
+			if(g_cR[CEnum_Debug].BoolValue) CPrintToChat(client, "%s -1", m_cPrefix);
 		}
 	}
 }
@@ -503,6 +643,26 @@ public int ConfirmationCallback(Menu menu, MenuAction mAction, int client, int i
 	}
 }
 
+public void Case_VersionMenu(Jatekos jatekos)
+{
+	Menu menu = CreateMenu(VersionCallback);
+	menu.SetTitle("Caseopening System - Version\n%s\nContributors:", PLUGIN_VERSION);
+	menu.AddItem("nexd", "KillStr3aK ( Nexd )");
+	menu.Display(jatekos.index, MENU_TIME_FOREVER);
+}
+
+public int VersionCallback(Menu menu, MenuAction mAction, int client, int item)
+{
+	if(mAction == MenuAction_Select)
+	{
+		char info[10];
+		menu.GetItem(item, info, sizeof(info));
+		if(StrEqual(info, "nexd")){
+			CPrintToChat(client, "%s \x10%s\n\x0B%s", m_cPrefix, "https://steamcommunity.com/id/yvaacs/", "https://github.com/KillStr3aK");
+		}
+	}
+}
+
 public void OnGameFrame()
 {
 	for (int i = 1; i < m_iCases; ++i)
@@ -515,7 +675,7 @@ public void Pre_OpenCase(Jatekos jatekos)
 {
 	if(!(m_iItems[m_iCacheCase[jatekos.index]] > 0))
 	{
-		PrintToChat(jatekos.index, "This case haven't got any item yet.");
+		CPrintToChat(jatekos.index, "%s This case haven't got any item yet.", m_cPrefix);
 		return;
 	}
 
@@ -536,7 +696,7 @@ public Action OpenCase(Handle timer, Jatekos jatekos)
 		if(GetItemFromCase(jatekos, m_iCacheCase[jatekos.index]) != -1) m_iOpenedItem[jatekos.index] = GetItemFromCase(jatekos, m_iCacheCase[jatekos.index]);
 		else {
 			ManagePlayerInventory(jatekos, false);
-			PrintToChat(jatekos.index, "Something happend, Please contact the server owner or the plugin author. \x07ERRCODE: fOpenCase.GetItemFromCase(%i-%i-%i)", m_iOpenedItem[jatekos.index], m_iCacheCase[jatekos.index], m_iPlayerID[jatekos.index]);
+			CPrintToChat(jatekos.index, "%s Something happend, Please contact the server owner or the plugin author. \x07ERRCODE: fOpenCase.GetItemFromCase(%i-%i-%i)", m_cPrefix, m_iOpenedItem[jatekos.index], m_iCacheCase[jatekos.index], m_iPlayerID[jatekos.index]);
 			return Plugin_Stop;
 		}
 	}
@@ -550,13 +710,24 @@ public Action OpenCase(Handle timer, Jatekos jatekos)
 
 		if(ProcessItem(jatekos, m_iCacheCase[jatekos.index], g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Type], g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Value]) != -1)
 		{
-			PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade], g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Name]);
+			if(GetGrade(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade]) != -1) PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade])][rColor], g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Name]);
+			else {
+				CPrintToChat(jatekos.index, "%s Something happend while we tried to get the item grade. Please contact the server owner or the plugin author. \x07ERRCODE: fOpenCase.ProcessItem.GetGrade(%i-%i-%i-%i)", m_cPrefix, m_iOpenedItem[jatekos.index], m_iCacheCase[jatekos.index], m_iPlayerID[jatekos.index], GetGrade(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade]));
+				ManagePlayerInventory(jatekos, false);
+			}
 			if(g_cR[CEnum_Debug].BoolValue) Format(m_cChanceDetails, sizeof(m_cChanceDetails), "item chance: %f player chance: %f");
-			PrintToChat(jatekos.index, "%s \x04%s \x01has opened a case and found: %s", PREFIX, cPlayerName, g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Name], g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Chance], m_fChance[jatekos.index], (g_cR[CEnum_Debug].BoolValue?m_cChanceDetails:empty));
-			if(g_cR[CEnum_Debug].BoolValue) PrintToChat(jatekos.index, "highest: %f lowest: %f", GetHighestItemChance(m_iCacheCase[jatekos.index]), GetLowestItemChance(m_iCacheCase[jatekos.index]));
+			CPrintToChatAll("%s \x04%s \x01has opened a case and found: %s%s", m_cPrefix, cPlayerName, g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade])][cColor], g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Name], g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Chance], m_fChance[jatekos.index], (g_cR[CEnum_Debug].BoolValue?m_cChanceDetails:empty));
+			if(!StrEqual(g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade])][Sound], empty)) PlayOpenSound(jatekos, g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade])][Sound]);
+			if(g_cR[CEnum_Debug].BoolValue) CPrintToChat(jatekos.index, "%s highest: %f lowest: %f", m_cPrefix, GetHighestItemChance(m_iCacheCase[jatekos.index]), GetLowestItemChance(m_iCacheCase[jatekos.index]));
+
+			Call_StartForward(Forwards[OnCaseOpened]);
+			Call_PushCell(jatekos.index);
+			Call_PushString(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Type]);
+			Call_PushString(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Value]);
+			Call_Finish();
 		} else {
 			ManagePlayerInventory(jatekos, false);
-			PrintToChat(jatekos.index, "Something happend while we tried to process your item, Please contact the server owner or the plugin author. \x07ERRCODE: fOpenCase.ProcessItem(%i-%i-%i-%i)", m_iOpenedItem[jatekos.index], m_iCacheCase[jatekos.index], m_iPlayerID[jatekos.index], -1);
+			CPrintToChat(jatekos.index, "%s Something happend while we tried to process your item, Please contact the server owner or the plugin author. \x07ERRCODE: fOpenCase.ProcessItem(%i-%i-%i-%i)", m_cPrefix, m_iOpenedItem[jatekos.index], m_iCacheCase[jatekos.index], m_iPlayerID[jatekos.index], -1);
 		}
 		
 		m_fChance[jatekos.index] = -1.0;
@@ -566,8 +737,19 @@ public Action OpenCase(Handle timer, Jatekos jatekos)
 		return Plugin_Stop;
 	}
 
-	if(!StrEqual(g_eItem[m_iCacheCase[jatekos.index]][randomszam][Name], empty))
-		PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eItem[m_iCacheCase[jatekos.index]][randomszam][Grade], g_eItem[m_iCacheCase[jatekos.index]][randomszam][Name]);
+	if(!StrEqual(g_eItem[m_iCacheCase[jatekos.index]][randomszam][Name], empty)) {
+		if(GetGrade(g_eItem[m_iCacheCase[jatekos.index]][randomszam][Grade]) != -1) PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][randomszam][Grade])][rColor], g_eItem[m_iCacheCase[jatekos.index]][randomszam][Name]);
+		else {
+			CPrintToChat(jatekos.index, "%s Something happend while we tried to get the item grade. Please contact the server owner or the plugin author. \x07ERRCODE: fOpenCase.GetGrade(%i-%i-%i-%i)", m_cPrefix, randomszam, m_iCacheCase[jatekos.index], m_iPlayerID[jatekos.index], GetGrade(g_eItem[m_iCacheCase[jatekos.index]][randomszam][Grade]));
+			ManagePlayerInventory(jatekos, false);
+
+			m_fChance[jatekos.index] = -1.0;
+			m_iSzam[jatekos.index] = 0;
+			m_iOpenedItem[jatekos.index] = -1;
+			m_bOpening[jatekos.index] = false;
+			return Plugin_Stop;
+		}
+	}
 
 	m_iSzam[jatekos.index]++;			
 	return Plugin_Continue;
@@ -584,7 +766,7 @@ public int ProcessItem(Jatekos jatekos, int caseid, char[] type, char[] value)
 		Call_Finish();
 		return 1;
 	} else {
-		PrintToChat(jatekos.index, "Something happend, there is no module for the item you have opened, Please contact the server owner or the plugin author. \x07ERRCODE: fProcessItem(%i-%i-%s)", Case_GetTypeHandler(type), m_iPlayerID[jatekos.index], type);
+		CPrintToChat(jatekos.index, "%s Something happend, there is no module for the item you have opened, Please contact the server owner or the plugin author. \x07ERRCODE: fProcessItem(%i-%i-%s)", m_cPrefix, Case_GetTypeHandler(type), m_iPlayerID[jatekos.index], type);
 	}
 
 	return -1;
@@ -640,10 +822,10 @@ public Action Event_EndMatch(Event event, const char[] name, bool dontBroadcast)
 		{
 			CreateTimer(g_cR[CEnum_DropDelay].FloatValue, Case_DropEvent, view_as<Jatekos>(GetRandomPlayer()), TIMER_FLAG_NO_MAPCHANGE);
 		} else {
-			PrintToChatAll("There will be no drop for now.");
+			CPrintToChatAll("%s There will be no drop for now.", m_cPrefix);
 		}
 	} else {
-		PrintToChatAll("There is not enough player for a case drop.");
+		CPrintToChatAll("%s There is not enough player for a case drop.", m_cPrefix);
 	}
 }
 
@@ -651,7 +833,7 @@ public Action Case_DropEvent(Handle timer, Jatekos jatekos)
 {
 	int caseid = GetRandomCase();
 	Case_GiveCase(jatekos, caseid);
-	PrintToChatAll("%s has got a %s as a drop!", jatekos.index, g_eCase[caseid][Name]);
+	CPrintToChatAll("%s \x04%N has got a %s as a drop!", m_cPrefix, jatekos.index, g_eCase[caseid][Name]);
 	PlaySoundToClient(jatekos, m_cDropSound);
 	return Plugin_Continue;
 }
@@ -666,7 +848,7 @@ public void Case_GiveCase(Jatekos jatekos, int caseid)
 
 public void PlaySoundToClient(Jatekos jatekos, char[] sound)
 {
-	EmitSoundToClient(jatekos.index, sound);
+	PlayOpenSound(jatekos, sound);
 }
 
 public void Event_RoundStart(Event event, const char[] name, bool dontBroadcast)
@@ -677,7 +859,7 @@ public void Event_RoundStart(Event event, const char[] name, bool dontBroadcast)
 		{
 			Case_SpawnCases();
 		} else {
-			PrintToChatAll("There is not enough player to spawn cases");
+			CPrintToChatAll("%s There is not enough player to spawn cases", m_cPrefix);
 		}
 	}
 }
@@ -718,7 +900,7 @@ public void OnConfigsExecuted()
   		`type` varchar(32) COLLATE utf8_bin NOT NULL, \
   		`value` varchar(32) NOT NULL, \
   		`case_id` int(20) NOT NULL, \
-  		`grade` varchar(10) NOT NULL, \
+  		`grade` varchar(32) NOT NULL, \
   		`chance` float(20) NOT NULL, \
  		 PRIMARY KEY (`ID`), \
   		 UNIQUE KEY `uname` (`uname`)  \
@@ -749,9 +931,23 @@ public void OnConfigsExecuted()
 
 	SQL_TQuery(g_DB, SQLHibaKereso, createTableQuery);
 
+	Format(createTableQuery, sizeof(createTableQuery), 
+		"CREATE TABLE IF NOT EXISTS `case_grades` ( \
+ 		`ID` bigint(20) NOT NULL AUTO_INCREMENT, \
+  		`unique_id` varchar(32) COLLATE utf8_bin NOT NULL, \
+  		`chatcolor` varchar(12) COLLATE utf8_bin NOT NULL, \
+  		`rollcolor` varchar(12) COLLATE utf8_bin NOT NULL, \
+  		`sound` varchar(255) COLLATE utf8_bin NOT NULL, \
+ 		 PRIMARY KEY (`ID`), \
+ 		 UNIQUE KEY `unique_id` (`unique_id`)  \
+  		 ) ENGINE = InnoDB AUTO_INCREMENT=0 DEFAULT CHARSET=utf8 COLLATE=utf8_bin;");
+
+	SQL_TQuery(g_DB, SQLHibaKereso, createTableQuery);
+
 	SQL_LoadCases();
 
 	m_fOffsetZ = g_cR[CEnum_OffsetFloat].FloatValue;
+	g_cR[CEnum_ChatPrefix].GetString(m_cPrefix, sizeof(m_cPrefix));
 }
 
 public void SQL_LoadCases()
@@ -770,7 +966,7 @@ public void GetCasesFromDB(Handle owner, Handle hndl, const char[] error, any da
 		SQL_FetchString(hndl, 1, g_eCase[m_iCases][CaseName], 32);
 		SQL_FetchString(hndl, 2, g_eCase[m_iCases][Unique_ID], 32);
 		if(g_cR[CEnum_PickUp].BoolValue) SQL_FetchString(hndl, 5, g_eCase[m_iCases][Model], PLATFORM_MAX_PATH);
-		g_eCase[m_iCases][CaseID] = SQL_FetchInt(hndl, 3);
+		g_eCase[m_iCases][mCaseID] = SQL_FetchInt(hndl, 3);
 		g_eCase[m_iCases][bReqKey] = view_as<bool>(SQL_FetchInt(hndl, 4));
 
 		if(view_as<int>(g_eCase[m_iCases][bReqKey]) > 1 && view_as<int>(g_eCase[m_iCases][bReqKey]) < 0)
@@ -778,9 +974,9 @@ public void GetCasesFromDB(Handle owner, Handle hndl, const char[] error, any da
 			g_eCase[m_iCases][bReqKey] = false;
 		}
 
-		if(!(g_eCase[m_iCases][CaseID] >= 0)) continue;
-		Format(Query, sizeof(Query), "SELECT * FROM case_items WHERE case_id = '%i';", g_eCase[m_iCases][CaseID]);
-		SQL_TQuery(g_DB, GetItemsFromDB, Query, g_eCase[m_iCases][CaseID]);
+		if(!(g_eCase[m_iCases][mCaseID] >= 0)) continue;
+		Format(Query, sizeof(Query), "SELECT * FROM case_items WHERE case_id = '%i';", g_eCase[m_iCases][mCaseID]);
+		SQL_TQuery(g_DB, GetItemsFromDB, Query, g_eCase[m_iCases][mCaseID]);
 
 		m_iCases++;
 	}
@@ -793,11 +989,27 @@ public void GetItemsFromDB(Handle owner, Handle hndl, const char[] error, int ca
 		SQL_FetchString(hndl, 2, g_eItem[caseid][m_iItems[caseid]][Unique], 32);
 		SQL_FetchString(hndl, 3, g_eItem[caseid][m_iItems[caseid]][Type], 32);
 		SQL_FetchString(hndl, 4, g_eItem[caseid][m_iItems[caseid]][Value], 32);
-		SQL_FetchString(hndl, 6, g_eItem[caseid][m_iItems[caseid]][Grade], 10);
+		SQL_FetchString(hndl, 6, g_eItem[caseid][m_iItems[caseid]][Grade], 32);
 		g_eItem[caseid][m_iItems[caseid]][ParentCase] = SQL_FetchInt(hndl, 5);
 		g_eItem[caseid][m_iItems[caseid]][Chance] = SQL_FetchFloat(hndl, 7);
 
 		m_iItems[caseid]++;
+	}
+
+	char Query[256];
+	Format(Query, sizeof(Query), "SELECT * FROM case_grades;");
+	SQL_TQuery(g_DB, GetGradesFromDB, Query);
+}
+
+public void GetGradesFromDB(Handle owner, Handle hndl, const char[] error, any data)
+{
+	while (SQL_FetchRow(hndl)) {
+		SQL_FetchString(hndl, 1, g_eGrade[m_iGrades][g_uName], 32);
+		SQL_FetchString(hndl, 2, g_eGrade[m_iGrades][cColor], 12);
+		SQL_FetchString(hndl, 3, g_eGrade[m_iGrades][rColor], 12);
+		SQL_FetchString(hndl, 4, g_eGrade[m_iGrades][Sound], PLATFORM_MAX_PATH);
+
+		m_iGrades++;
 	}
 }
 
@@ -857,6 +1069,7 @@ public void CasesReset()
 	}
 
 	m_iCases = 1;
+	m_iGrades = 0;
 }
 
 public int Case_SpawnCases()
@@ -900,21 +1113,24 @@ public void SpawnCase(int caseid, int id) {
 	TeleportEntity(m_iCaseEnt, fPos, NULL_VECTOR, NULL_VECTOR);
 	fPos[2] -= m_fOffsetZ;
 	
-	int m_iRotator = CreateEntityByName("func_rotating");
-	DispatchKeyValueVector(m_iRotator, "origin", fPos);
-	DispatchKeyValue(m_iRotator, "targetname", "Item");
-	DispatchKeyValue(m_iRotator, "maxspeed", "200");
-	DispatchKeyValue(m_iRotator, "friction", "0");
-	DispatchKeyValue(m_iRotator, "dmg", "0");
-	DispatchKeyValue(m_iRotator, "solid", "0");
-	DispatchKeyValue(m_iRotator, "spawnflags", "64");
-	DispatchSpawn(m_iRotator);
-	
-	SetVariantString("!activator");
-	AcceptEntityInput(m_iCaseEnt, "SetParent", m_iRotator, m_iRotator);
-	AcceptEntityInput(m_iRotator, "Start");
-	
-	SetEntPropEnt(m_iCaseEnt, Prop_Send, "m_hEffectEntity", m_iRotator);
+	if(g_cR[CEnum_RotateCase].BoolValue)
+	{
+		int m_iRotator = CreateEntityByName("func_rotating");
+		DispatchKeyValueVector(m_iRotator, "origin", fPos);
+		DispatchKeyValue(m_iRotator, "targetname", "Item");
+		DispatchKeyValue(m_iRotator, "maxspeed", "200");
+		DispatchKeyValue(m_iRotator, "friction", "0");
+		DispatchKeyValue(m_iRotator, "dmg", "0");
+		DispatchKeyValue(m_iRotator, "solid", "0");
+		DispatchKeyValue(m_iRotator, "spawnflags", "64");
+		DispatchSpawn(m_iRotator);
+		
+		SetVariantString("!activator");
+		AcceptEntityInput(m_iCaseEnt, "SetParent", m_iRotator, m_iRotator);
+		AcceptEntityInput(m_iRotator, "Start");
+		
+		SetEntPropEnt(m_iCaseEnt, Prop_Send, "m_hEffectEntity", m_iRotator);
+	}
 	
 	HookSingleEntityOutput(m_iCaseEnt, "OnStartTouch", Case_OnStartTouch);
 	
@@ -944,7 +1160,7 @@ public void Case_OnStartTouch(const char[] output, int caller, int activator, fl
 			return;
 
 		AcceptEntityInput(caller, "kill");
-		if(m_iCaseItemId[0] == 0 && m_iCaseItemId[1] == 0 && g_iLoadedCases[m_iCaseItemId[0]] == 0 && g_iSpawnedCases[m_iCaseItemId[0]] == 0) PrintToChat(activator, "Something happend while we tried to process your item, Please contact the server owner or the plugin author. \x07ERRCODE: CaseTrigger.Case_OnStartTouch(%i-%i-%i-%i-%i)", m_iCaseItemId[0], m_iCaseItemId[1], m_iCases, g_iLoadedCases[m_iCaseItemId[0]], g_iSpawnedCases[m_iCaseItemId[0]]);
+		if(m_iCaseItemId[0] == 0 && m_iCaseItemId[1] == 0 && g_iLoadedCases[m_iCaseItemId[0]] == 0 && g_iSpawnedCases[m_iCaseItemId[0]] == 0) CPrintToChat(activator, "%s Something happend while we tried to process your request, Please contact the server owner or the plugin author. \x07ERRCODE: CaseTrigger.Case_OnStartTouch(%i-%i-%i-%i-%i)", m_cPrefix, m_iCaseItemId[0], m_iCaseItemId[1], m_iCases, g_iLoadedCases[m_iCaseItemId[0]], g_iSpawnedCases[m_iCaseItemId[0]]);
 		g_eSpawnPositions[m_iCaseItemId[0]][m_iCaseItemId[1]][bSpawned] = false;
 				
 		AcceptEntityInput(EntRefToEntIndex(g_eSpawnPositions[m_iCaseItemId[0]][m_iCaseItemId[1]][EntRef]), "kill");
@@ -954,7 +1170,7 @@ public void Case_OnStartTouch(const char[] output, int caller, int activator, fl
 				
 		char cPlayerName[MAX_NAME_LENGTH+1];
 		jatekos.GetName(cPlayerName, sizeof(cPlayerName));
-		PrintToChatAll("%s has picked up a %s!", cPlayerName, g_eCase[m_iCaseItemId[0]][Name]);
+		CPrintToChatAll("%s %s has picked up a %s!", m_cPrefix, cPlayerName, g_eCase[m_iCaseItemId[0]][Name]);
 	}
 }
 
@@ -1009,6 +1225,11 @@ public int CaseTrigger(float pos[3], int caseid, char[] name)
 	HookSingleEntityOutput(iEnt, "OnStartTouch", Case_OnStartTouch);
 }
 
+public void PlayOpenSound(Jatekos jatekos, char[] sound)
+{
+	ClientCommand(jatekos.index, "play %s", sound);
+}
+
 public void LoadCasesFromFile()
 {
 	if(g_cR[CEnum_PickUp].BoolValue)
@@ -1031,7 +1252,7 @@ public void LoadCasesFromFile()
 		{
 			while (ReadFileLine(hFile, sBuffer, sizeof(sBuffer)))
 			{
-				ExplodeString(sBuffer, ";", m_sLoadedData, sizeof(m_sLoadedData[]), sizeof(m_sLoadedData[]) / 8);
+				ExplodeString(sBuffer, ";", m_sLoadedData, sizeof(m_sLoadedData[]) / 8, sizeof(m_sLoadedData[]));
 				m_iCaseIdCache = StringToInt(m_sLoadedData[0]);
 
 				g_eSpawnPositions[m_iCaseIdCache][g_iLoadedCases[m_iCaseIdCache]][CaseId] = m_iCaseIdCache;
@@ -1115,12 +1336,12 @@ public void Case_PlaceCase(Jatekos jatekos, bool vision, int caseid)
 		TE_SetupGlowSprite(fPos, g_iMarker, 10.0, 1.0, 235);
 		TE_SendToAll();
 		
-		g_iLoadedCases[caseid]++;
 		g_eSpawnPositions[caseid][g_iLoadedCases[caseid]][fPosX] = fPos[0];
 		g_eSpawnPositions[caseid][g_iLoadedCases[caseid]][fPosY] = fPos[1];
 		g_eSpawnPositions[caseid][g_iLoadedCases[caseid]][fPosZ] = fPos[2];
+		g_iLoadedCases[caseid]++;
 		
-		PrintToChat(jatekos.index, "You have placed a new case! <%i>:<%.2f>:<%.2f>:<%.2f>", caseid, fPos[0], fPos[1], fPos[2]);
+		CPrintToChat(jatekos.index, "%s You have placed a new case! <%i>:<%.2f>:<%.2f>:<%.2f>", m_cPrefix, caseid, fPos[0], fPos[1], fPos[2]);
 		SaveCasesToFile();
 	}
 }
@@ -1181,7 +1402,7 @@ public void fPlaceCase_ListCases(Jatekos jatekos)
 	{
 		for (int i = 1; i < m_iCases; ++i)
 		{
-			if(g_eCase[i][CaseID] == 0) continue;
+			if(g_eCase[i][mCaseID] == 0) continue;
 			menu.AddItem(g_eCase[i][Unique_ID], g_eCase[i][CaseName]);
 		}
 	} else {
@@ -1203,14 +1424,14 @@ public int fPlaceCase_SelectCases(Menu menu, MenuAction mAction, int client, int
 			m_iCacheCase[client] = GetCaseIdFromUnique(cUID);
 			Case_AdminMenu(Jatekos(client), 0);
 		} else {
-			if(g_cR[CEnum_Debug].BoolValue) PrintToChat(client, "-1");
+			if(g_cR[CEnum_Debug].BoolValue) CPrintToChat(client, "%s -1", m_cPrefix);
 		}
 	}
 }
 
 public void fPlaceCase_DeleteLast(Jatekos jatekos, int caseid) {
 	g_iLoadedCases[caseid]--;
-	PrintToChat(jatekos.index, "You have deleted the previous placed case. (total: %i).", g_iLoadedCases);
+	CPrintToChat(jatekos.index, "%s You have deleted the previous placed case. (total: %i).", m_cPrefix, g_iLoadedCases);
 	SaveCasesToFile();
 }
 
@@ -1233,6 +1454,11 @@ public int Native_IsInventoryLoaded(Handle plugin, int params)
 	return IsInventoryLoaded(GetNativeCell(1));
 }
 
+public int Native_IsBanned(Handle plugin, int params)
+{
+	return IsBanned(GetNativeCell(1));
+}
+
 public void SQLHibaKereso(Handle owner, Handle hndl, const char[] error, any data) {
 	if (!StrEqual(error, ""))
 		LogError(error);
@@ -1243,7 +1469,7 @@ stock int GetCaseIdFromUnique(char[] unique)
 	for (int i = 1; i < m_iCases; ++i)
 	{
 		if(StrEqual(g_eCase[i][Unique_ID], unique))
-			return g_eCase[i][CaseID];
+			return g_eCase[i][mCaseID];
 	}
 
 	return -1;
@@ -1290,6 +1516,16 @@ stock int GetSpawnedItemIdFromUnique(char[] unique)
 	return -1;
 }
 
+stock int GetGrade(char[] grade)
+{
+	for (int i = 0; i < m_iGrades; ++i)
+	{
+		if(StrEqual(g_eGrade[i][g_uName], grade)) return i;
+	}
+
+	return -1;
+}
+
 stock float GetHighestItemChance(int caseid)
 {
 	float chance = 0.0;
@@ -1317,14 +1553,26 @@ stock float GetLowestItemChance(int caseid)
 			chance = g_eItem[caseid][i][Chance];
 	}
 
-	if(chance == 1.0) chance = 0.0;
+	if(chance == 1.0) chance = 0.00000001;
 
 	return chance;
 }
 
 stock int GetRandomCase()
 {
-	return GetRandomInt(1, m_iCases);
+	int cases[MAX_CASES];
+	int casecount;
+	int randomcase;
+
+	for(int i=0; i<=MAX_CASES; i++)
+	{
+	    if(!IsValidCase(i)) continue;
+
+	    cases[casecount++] = i;
+	}
+
+	randomcase = cases[GetRandomInt(0, casecount-1)];
+	return randomcase;
 }
 
 stock int VerifyCaseItems(int caseid)
@@ -1342,6 +1590,13 @@ stock int VerifyCaseItems(int caseid)
 stock bool IsOpening(Jatekos jatekos)
 {
 	return m_bOpening[jatekos.index];
+}
+
+stock bool IsValidCase(int caseid)
+{
+	if(!StrEqual(g_eCase[caseid][Name], empty) && !StrEqual(g_eCase[caseid][Unique_ID], empty) && g_eCase[caseid][mCaseID] > 0) return true;
+
+	return false;
 }
 
 stock bool IsBanned(Jatekos jatekos)
