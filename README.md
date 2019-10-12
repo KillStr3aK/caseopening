@@ -23,6 +23,9 @@
 * **sm_refreshcases** - Refresh the cases from db (This will refresh the items && grades too.)
 * **sm_loadinv** - Load inventory for the given player
 
+* **sm_givekey** - Give key to a player
+* **sm_givecase** - Give case to a player
+
 ### Known bugs:
 * Sometimes the drop command is not works as intented
 * Not precached models can crash the server && players
