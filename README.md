@@ -1,7 +1,7 @@
 ## caseopening 1.0.1012pre
 ### THIS IS JUST A PRE_ RELEASE! UNEXPECTED THINGS COULD HAPPEN!
 ### YOU CAN GIVE CASES, KEYS TO THE PLAYERS THROUGH DB. (case_players and case_inventory table)
-### THE POINT OF THIS RELEASE IS TO REPORT AS MUCH BUGS AS POSSIBLE AND FIX THEM
+### THE POINT OF THIS PRERELEASE IS TO REPORT AS MUCH BUGS AS POSSIBLE AND FIX THEM
 # THIS IS NOT READY FOR LIVE SERVERS! TEST PURPOSES ONLY! You have been warned.
 
 # Before asking "how-to" questions, please take a look on the wiki: https://github.com/KillStr3aK/caseopening/wiki
