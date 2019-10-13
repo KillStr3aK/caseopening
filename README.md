@@ -24,7 +24,7 @@
 
 ### Known bugs:
 * Sometimes the drop command is not works as intended
-* Not precached models can crash the server && players
+* N̶o̶t̶ ̶p̶r̶e̶c̶a̶c̶h̶e̶d̶ ̶m̶o̶d̶e̶l̶s̶ ̶c̶a̶n̶ ̶c̶r̶a̶s̶h̶ ̶t̶h̶e̶ ̶s̶e̶r̶v̶e̶r̶ ̶&̶&̶ ̶p̶l̶a̶y̶e̶r̶s̶
 
 ## What will be added after the first release?
 * Spawning the case in front of the player and play the open animation
