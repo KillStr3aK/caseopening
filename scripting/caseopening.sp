@@ -6,7 +6,7 @@
 #define PLUGIN_NEV	"Caseopening system"
 #define PLUGIN_LERIAS	"(8_8)"
 #define PLUGIN_AUTHOR	"Nexd"
-#define PLUGIN_VERSION	"1.0.1012pre"
+#define PLUGIN_VERSION	"1.0.1013pre"
 #define PLUGIN_URL	"https://github.com/KillStr3aK"
 
 #define MAX_CASES 32
@@ -179,6 +179,8 @@ public void OnPluginStart()
 	HookEvent("round_start", Event_RoundStart);
 	HookEvent("cs_intermission", Event_EndMatch);
 
+	LoadTranslations("common.phrases");
+
 	//Core included modules
 	StoreCreditsOnPluginStart();
 	StorePlayerSkinsOnPluginStart();
@@ -204,16 +206,7 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
 
 public void OnMapStart()
 {
-	if(g_cR[CEnum_PickUp].BoolValue)
-	{
-		for (int i = 1; i < m_iCases; ++i)
-		{
-			g_iLoadedCases[i] = 0;
-		}
-
-		g_iMarker = PrecacheModel("sprites/blueglow1.vmt");
-	}
-
+	g_iMarker = PrecacheModel("sprites/blueglow1.vmt");
 	OnMapStartLoadCasesFromFile();
 
 	g_cR[CEnum_DropSound].GetString(m_cDropSound, sizeof(m_cDropSound));
@@ -715,7 +708,7 @@ public Action OpenCase(Handle timer, Jatekos jatekos)
 				CPrintToChat(jatekos.index, "%s Something happend while we tried to get the item grade. Please contact the server owner or the plugin author. \x07ERRCODE: fOpenCase.ProcessItem.GetGrade(%i-%i-%i-%i)", m_cPrefix, m_iOpenedItem[jatekos.index], m_iCacheCase[jatekos.index], m_iPlayerID[jatekos.index], GetGrade(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade]));
 				ManagePlayerInventory(jatekos, false);
 			}
-			if(g_cR[CEnum_Debug].BoolValue) Format(m_cChanceDetails, sizeof(m_cChanceDetails), "item chance: %f player chance: %f");
+			if(g_cR[CEnum_Debug].BoolValue) Format(m_cChanceDetails, sizeof(m_cChanceDetails), "item chance: %f player chance: %f", g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Chance], m_fChance[jatekos.index]);
 			CPrintToChatAll("%s \x04%s \x01has opened a case and found: %s%s", m_cPrefix, cPlayerName, g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade])][cColor], g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Name], g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Chance], m_fChance[jatekos.index], (g_cR[CEnum_Debug].BoolValue?m_cChanceDetails:empty));
 			if(!StrEqual(g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade])][Sound], empty)) PlayOpenSound(jatekos, g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade])][Sound]);
 			if(g_cR[CEnum_Debug].BoolValue) CPrintToChat(jatekos.index, "%s highest: %f lowest: %f", m_cPrefix, GetHighestItemChance(m_iCacheCase[jatekos.index]), GetLowestItemChance(m_iCacheCase[jatekos.index]));
@@ -1074,6 +1067,8 @@ public void CasesReset()
 
 public int Case_SpawnCases()
 {
+	OnMapStartLoadCasesFromFile();
+
 	if(g_cR[CEnum_PickUp].BoolValue)
 	{
 		for (int i = 1; i < m_iCases; ++i)
@@ -1274,6 +1269,14 @@ public void OnMapStartLoadCasesFromFile()
 	BuildPath(Path_SM, Path, sizeof(Path), "configs/case_spawns");
 	if (!DirExists(Path))
 		CreateDirectory(Path, 0777);
+
+	if(g_cR[CEnum_PickUp].BoolValue)
+	{
+		for (int i = 1; i < m_iCases; ++i)
+		{
+			g_iLoadedCases[i] = 0;
+		}
+	}
 	
 	for (int i = 1; i < m_iCases; ++i)
 	{
@@ -1431,7 +1434,7 @@ public int fPlaceCase_SelectCases(Menu menu, MenuAction mAction, int client, int
 
 public void fPlaceCase_DeleteLast(Jatekos jatekos, int caseid) {
 	g_iLoadedCases[caseid]--;
-	CPrintToChat(jatekos.index, "%s You have deleted the previous placed case. (total: %i).", m_cPrefix, g_iLoadedCases);
+	CPrintToChat(jatekos.index, "%s You have deleted the previous placed case. (total: %i).", m_cPrefix, g_iLoadedCases[caseid]);
 	SaveCasesToFile();
 }
 
