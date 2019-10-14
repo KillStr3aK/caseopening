@@ -31,6 +31,8 @@
 * New modules, based on feedbacks
 * Better menu, the current one is for test purposes.
 * More options for how could the players get cases, keys.
+Youtube:
+[![Caseopening](https://media.giphy.com/media/13Nc3xlO1kGg3S/giphy-facebook_s.jpg)](https://www.youtube.com/watch?v=4AJx2e54Fws)
 
 Preview:
 ![Stock cases, filled with store items](https://i.imgur.com/U7MSz8s.png)
