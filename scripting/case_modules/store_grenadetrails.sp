@@ -1,9 +1,9 @@
-public void StoreAuraOnPluginStart()
+public void StoreGrenadeTrailOnPluginStart()
 {
-	Case_RegisterModule("store.aura", false, AuraOpened);
+	Case_RegisterModule("store.grenadetrail", false, GrenadeTrailOpened);
 }
 
-public void AuraOpened(Jatekos jatekos, char[] aura)
+public void GrenadeTrailOpened(Jatekos jatekos, char[] grenadetrail)
 {
 	char authid[20];
 	GetLegacyAuthString(jatekos.index, authid, sizeof(authid));
@@ -12,8 +12,8 @@ public void AuraOpened(Jatekos jatekos, char[] aura)
 	Format(Query, sizeof(Query), "SELECT id FROM store_players WHERE authid = '%s'", authid);
 
 	DataPack things = new DataPack();
-	things.WriteString("CustomParticles");
-	things.WriteString(aura)
+	things.WriteString("grenadetrail");
+	things.WriteString(grenadetrail)
 
 	SQL_TQuery(g_DB, GiveStoreItemForSteamId, Query, things);
 }

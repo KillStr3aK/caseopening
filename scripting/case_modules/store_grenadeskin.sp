@@ -1,9 +1,9 @@
-public void StoreAuraOnPluginStart()
+public void StoreGrenadeSkinOnPluginStart()
 {
-	Case_RegisterModule("store.aura", false, AuraOpened);
+	Case_RegisterModule("store.grenadeskin", false, GrenadeSkinOpened);
 }
 
-public void AuraOpened(Jatekos jatekos, char[] aura)
+public void GrenadeSkinOpened(Jatekos jatekos, char[] grenadeskin)
 {
 	char authid[20];
 	GetLegacyAuthString(jatekos.index, authid, sizeof(authid));
@@ -12,8 +12,8 @@ public void AuraOpened(Jatekos jatekos, char[] aura)
 	Format(Query, sizeof(Query), "SELECT id FROM store_players WHERE authid = '%s'", authid);
 
 	DataPack things = new DataPack();
-	things.WriteString("CustomParticles");
-	things.WriteString(aura)
+	things.WriteString("grenadeskin");
+	things.WriteString(grenadeskin)
 
 	SQL_TQuery(g_DB, GiveStoreItemForSteamId, Query, things);
 }

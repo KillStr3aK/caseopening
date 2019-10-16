@@ -42,6 +42,8 @@ stock float FloatDivider(float value, float multiplier)
 
 stock float GetEntitiesDistance(int entity1, int entity2)
 {
+	if(!IsValidEntity(entity1) || !IsValidEntity(entity2)) return 100.0;
+	
 	float fOrigin1[3];
 	GetEntPropVector(entity1, Prop_Send, "m_vecOrigin", fOrigin1);
 
@@ -381,11 +383,11 @@ stock bool IsWarmup()
 
 stock int GetRandomPlayer()
 {
-	int jatekosok[MAXPLAYERS+1];
+	new jatekosok[MaxClients+1];
 	int jatekosszam;
 	int randomjatekos;
 
-	for(int i=1; i<=MaxClients; i++)
+	for(int i = 1; i <= MaxClients; i++)
 	{
 	    if(!IsValidClient(i)) continue;
 
@@ -394,6 +396,12 @@ stock int GetRandomPlayer()
 
 	randomjatekos = jatekosok[GetRandomInt(0, jatekosszam-1)];
 	return randomjatekos;
+}
+
+stock bool TRDontHitSelf(int entity, int mask, any data) {
+    if (entity == data)
+        return false;
+    return true;
 }
 
 stock Handle FindNamedCookie(const char[] cookieName) {
@@ -485,7 +493,7 @@ stock bool IsKnife(char[] knifename)
 
 stock int GetRandomPlayerFromTeam(int team)
 {
-	int jatekosok[MAXPLAYERS+1];
+	new jatekosok[MaxClients+1];
 	int jatekosszam;
 
 	for(int i=1; i <= MaxClients; i++)
@@ -968,6 +976,14 @@ methodmap Jatekos
 
 	public void GetAbsOrigin(float vec[3]) {
 		GetClientAbsOrigin(this.index, vec);
+	}
+
+	public void GetEyeAngle(float eang[3]) {
+		GetClientEyeAngles(this.index, eang);
+	}
+
+	public void GetEyePosition(float pos[3]) {
+		GetClientEyePosition(this.index, pos);
 	}
 
 	public float GetLatency(NetFlow flow) {

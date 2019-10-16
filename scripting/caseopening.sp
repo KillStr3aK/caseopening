@@ -6,7 +6,7 @@
 #define PLUGIN_NEV	"Caseopening system"
 #define PLUGIN_LERIAS	"(8_8)"
 #define PLUGIN_AUTHOR	"Nexd"
-#define PLUGIN_VERSION	"1.0.1013pre"
+#define PLUGIN_VERSION	"1.0.1016pre"
 #define PLUGIN_URL	"https://github.com/KillStr3aK"
 
 #define MAX_CASES 32
@@ -66,6 +66,7 @@ enum Module_Handler
 }
 
 enum {
+	OnStartOpening,
 	OnCaseOpened,
 	OnClientBanned,
 	m_iForwards
@@ -85,6 +86,8 @@ int PlayerInventory[MAXPLAYERS+1][MAX_CASES][Inventory];
 int m_iSzam[MAXPLAYERS+1] = 0;
 int m_iOpenedItem[MAXPLAYERS+1] = -1;
 
+int m_iOpenProp[MAXPLAYERS+1] = -1;
+
 int g_eTypeHandlers[MAX_MODULES][Module_Handler];
 int g_iTypeHandlers = 0;
 
@@ -101,7 +104,6 @@ bool m_bBanned[MAXPLAYERS+1] = false;
 bool m_bLoaded[MAXPLAYERS+1][Inventory];
 
 char m_cChanceDetails[128];
-char m_cDropSound[PLATFORM_MAX_PATH];
 char m_cPrefix[64];
 
 enum {
@@ -111,12 +113,15 @@ enum {
 	CEnum_Minplayer,
 	CEnum_DropChance,
 	CEnum_DropDelay,
-	CEnum_DropSound,
 	CEnum_PickUp,
 	CEnum_CaseSpawn,
 	CEnum_OffsetFloat,
 	CEnum_ChatPrefix,
 	CEnum_RotateCase,
+	CEnum_PlayAnimation,
+	CEnum_MustBeClose,
+	CEnum_MustLookAt,
+	CEnum_Distance,
 	Count
 }
 
@@ -133,8 +138,10 @@ ConVar g_cR[Count];
 #include "case_modules/store_paintball.sp"
 #include "case_modules/store_hats.sp"
 #include "case_modules/store_aura.sp"
-
-#include "case_modules/vipsystem.sp" // requires https://github.com/KillStr3aK/csgo-vipsystem Comment this line out if you dont want to use it.
+#include "case_modules/store_tracer.sp"
+#include "case_modules/store_lasersight.sp"
+#include "case_modules/store_grenadetrails.sp"
+#include "case_modules/store_grenadeskin.sp"
 
 #pragma newdecls required;
 
@@ -152,6 +159,7 @@ public void OnPluginStart()
 	RegConsoleCmd("sm_cases", Command_Cases);
 
 	RegAdminCmd("sm_refreshcases", Command_Refresh, ADMFLAG_ROOT);
+	RegAdminCmd("sm_refreshid", Command_RefreshId, ADMFLAG_ROOT);
 	RegAdminCmd("sm_loadinv", Command_Loadinv, ADMFLAG_ROOT);
 
 	RegAdminCmd("sm_caseban", Command_BanPlayer, ADMFLAG_ROOT);
@@ -164,15 +172,19 @@ public void OnPluginStart()
 	g_cR[CEnum_Debug] = CreateConVar("case_debug", "0", "debug mode");
 	g_cR[CEnum_Drops] = CreateConVar("case_drops", "1", "Endgame drops");
 
-	g_cR[CEnum_Minplayer] = CreateConVar("case_drops_minplayer", "1", "Minimum player count for endgame drops");
+	g_cR[CEnum_Minplayer] = CreateConVar("case_drops_minplayer", "1", "Minimum player count for endgame drops", _, true, float(1), true, float(MaxClients));
 	g_cR[CEnum_DropChance] = CreateConVar("case_drops_chance", "50", "Chance for the drop event to even happen ( 1 - 100 )", _, true, float(1), true, float(100));
 	g_cR[CEnum_DropDelay] = CreateConVar("case_drops_delay", "6.5", "Delay for the drop event");
-	g_cR[CEnum_DropSound] = CreateConVar("case_drops_sound", "sound/steelclouds/lada/ladadrop.mp3", "Sound path for drop sound (not relative)");
 
 	g_cR[CEnum_PickUp] = CreateConVar("case_pickup", "1", "Enable case pickups");
 	g_cR[CEnum_CaseSpawn] = CreateConVar("case_pickup_minplayer", "1", "Minimum players for cases to spawn");
 	g_cR[CEnum_OffsetFloat] = CreateConVar("case_pickup_offset", "30.0");
 	g_cR[CEnum_RotateCase] = CreateConVar("case_pickup_rotate", "1", "Rotate cases?");
+
+	g_cR[CEnum_PlayAnimation] = CreateConVar("case_open_animation", "1", "Play the case open animation?");
+	g_cR[CEnum_MustBeClose] = CreateConVar("case_open_close", "1", "Should the player stay close to the case?");
+	g_cR[CEnum_Distance] = CreateConVar("case_open_close_distance", "100.0", "Distance between the player and the case (float)");
+	g_cR[CEnum_MustLookAt] = CreateConVar("case_open_close_look", "0", "The player must look at the case?"); //Not works yet
 
 	g_cR[CEnum_ChatPrefix] = CreateConVar("case_chat_prefix", "{default}[{lightred}Case-System{default}]", "Chat prefix for messages");
 
@@ -188,16 +200,24 @@ public void OnPluginStart()
 	StoreTrailOnPluginStart();
 	StorePaintballOnPluginStart();
 	StoreHatsOnPluginStart();
-	VipSystemOnPluginStart();
 	StoreAuraOnPluginStart();
+	StoreTracerOnPluginStart();
+	StoreLaserSightOnPluginStart();
+	StoreGrenadeTrailOnPluginStart();
+	StoreGrenadeSkinOnPluginStart();
 }
 
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
 {
 	CreateNative("Case_RegisterModule", Native_RegisterModule);
+
 	CreateNative("Case_IsInventoryLoaded", Native_IsInventoryLoaded);
 	CreateNative("Case_IsBanned", Native_IsBanned);
 
+	CreateNative("Case_GiveCaseAmount", Native_GiveCase);
+	CreateNative("Case_GiveKeyAmount", Native_GiveKey);
+
+	Forwards[OnStartOpening] = CreateGlobalForward("Case_StartOpening", ET_Ignore, Param_Cell, Param_String);
 	Forwards[OnCaseOpened] = CreateGlobalForward("Case_OnCaseOpened", ET_Ignore, Param_Cell, Param_String, Param_String);
 	Forwards[OnClientBanned] = CreateGlobalForward("Case_OnClientBanned", ET_Ignore, Param_Cell, Param_Cell);
 	
@@ -209,11 +229,12 @@ public void OnMapStart()
 	g_iMarker = PrecacheModel("sprites/blueglow1.vmt");
 	OnMapStartLoadCasesFromFile();
 
-	g_cR[CEnum_DropSound].GetString(m_cDropSound, sizeof(m_cDropSound));
-	AddFileToDownloadsTable(m_cDropSound);
-
-	ReplaceString(m_cDropSound, sizeof(m_cDropSound), "sound/", "");
-	FakePrecacheSound(m_cDropSound);
+	AddFileToDownloadsTable("sound/steelclouds/lada/case_unlock.wav");
+	AddFileToDownloadsTable("sound/steelclouds/lada/lada.mp3");
+	AddFileToDownloadsTable("sound/steelclouds/lada/porgetes.mp3");
+	PrecacheSound("*/steelclouds/lada/case_unlock.wav", true);
+	PrecacheSound("steelclouds/lada/lada.mp3", true);
+	PrecacheSound("steelclouds/lada/porgetes.mp3", true);
 }
 
 public int Native_RegisterModule(Handle plugin, int params)
@@ -256,7 +277,7 @@ public Action Command_Cases(int client, int args)
 			if(IsInventoryLoaded(Jatekos(client))) CaseMenu(Jatekos(client));
 			else {
 				CPrintToChat(client, "%s Your inventory isn't fetched yet, please wait a bit.", m_cPrefix);
-				if(m_iPlayerID[client] > 0) LoadPlayerInventory(Jatekos(client));
+				OnClientPostAdminCheck(client);
 			}
 		} else {
 			CPrintToChat(client, "%s \x07You can't access the menu while opening a case.", m_cPrefix);
@@ -270,15 +291,16 @@ public Action Command_Cases(int client, int args)
 
 public Action Command_GiveCase(int client, int args)
 {
-	if(args != 2)
+	if(args != 3)
 	{
-		CPrintToChat(client, "%s Usage: !givecase target caseid", m_cPrefix);
+		CPrintToChat(client, "%s Usage: !givecase target caseid amount(1-100)", m_cPrefix);
 		return Plugin_Handled;
 	}
 
-	char cArgs[2][MAX_NAME_LENGTH+1];
+	char cArgs[3][MAX_NAME_LENGTH+1];
 	GetCmdArg(1, cArgs[0], sizeof(cArgs[]));
 	GetCmdArg(2, cArgs[1], sizeof(cArgs[]));
+	GetCmdArg(3, cArgs[2], sizeof(cArgs[]));
 
 	if(!view_as<Jatekos>(FindTarget(client, cArgs[0], true)).IsValid){
 		CPrintToChat(client, "%s Invalid target", m_cPrefix);
@@ -288,6 +310,12 @@ public Action Command_GiveCase(int client, int args)
 	if(!IsValidCase(StringToInt(cArgs[1])))
 	{
 		CPrintToChat(client, "%s Invalid case", m_cPrefix);
+		return Plugin_Handled;
+	}
+
+	if(StringToInt(cArgs[2]) > 100 || StringToInt(cArgs[2]) <= 0)
+	{
+		CPrintToChat(client, "%s Invalid amount (%i)", m_cPrefix, StringToInt(cArgs[2]));
 		return Plugin_Handled;
 	}
 
@@ -303,26 +331,31 @@ public Action Command_GiveCase(int client, int args)
 		return Plugin_Handled;
 	}
 
-	char Query[1024];
+	char Query[256];
 	Format(Query, sizeof(Query), "INSERT INTO `case_inventory` (`ID`, `unique_id`, `type`, `caseid`) VALUES (NULL, '%i', 'case', '%i');", m_iPlayerID[FindTarget(client, cArgs[0], true)], StringToInt(cArgs[1]));
-	SQL_TQuery(g_DB, SQLHibaKereso, Query);
+	
+	for (int i = 0; i < StringToInt(cArgs[2]); ++i)
+	{
+		SQL_TQuery(g_DB, SQLHibaKereso, Query);
+	}
 
-	CPrintToChat(client, "%s You have given %N a %s", m_cPrefix, FindTarget(client, cArgs[0], true), g_eCase[StringToInt(cArgs[1])][Name]);
+	CPrintToChat(client, "%s You have given %N %i %s", m_cPrefix, FindTarget(client, cArgs[0], true), StringToInt(cArgs[2]), g_eCase[StringToInt(cArgs[1])][Name]);
 
 	return Plugin_Handled;
 }
 
 public Action Command_GiveKey(int client, int args)
 {
-	if(args != 2)
+	if(args != 3)
 	{
-		CPrintToChat(client, "%s Usage: !givekey target caseid", m_cPrefix);
+		CPrintToChat(client, "%s Usage: !givecase target caseid amount(1-100)", m_cPrefix);
 		return Plugin_Handled;
 	}
 
-	char cArgs[2][MAX_NAME_LENGTH+1];
+	char cArgs[3][MAX_NAME_LENGTH+1];
 	GetCmdArg(1, cArgs[0], sizeof(cArgs[]));
 	GetCmdArg(2, cArgs[1], sizeof(cArgs[]));
+	GetCmdArg(3, cArgs[2], sizeof(cArgs[]));
 
 	if(!view_as<Jatekos>(FindTarget(client, cArgs[0], true)).IsValid){
 		CPrintToChat(client, "%s Invalid target", m_cPrefix);
@@ -332,6 +365,12 @@ public Action Command_GiveKey(int client, int args)
 	if(!IsValidCase(StringToInt(cArgs[1])))
 	{
 		CPrintToChat(client, "%s Invalid case", m_cPrefix);
+		return Plugin_Handled;
+	}
+
+	if(StringToInt(cArgs[2]) > 100 || StringToInt(cArgs[2]) <= 0)
+	{
+		CPrintToChat(client, "%s Invalid amount (%i)", m_cPrefix, StringToInt(cArgs[2]));
 		return Plugin_Handled;
 	}
 
@@ -347,11 +386,15 @@ public Action Command_GiveKey(int client, int args)
 		return Plugin_Handled;
 	}
 
-	char Query[1024];
+	char Query[256];
 	Format(Query, sizeof(Query), "INSERT INTO `case_inventory` (`ID`, `unique_id`, `type`, `caseid`) VALUES (NULL, '%i', 'key', '%i');", m_iPlayerID[FindTarget(client, cArgs[0], true)], StringToInt(cArgs[1]));
-	SQL_TQuery(g_DB, SQLHibaKereso, Query);
+	
+	for (int i = 0; i < StringToInt(cArgs[2]); ++i)
+	{
+		SQL_TQuery(g_DB, SQLHibaKereso, Query);
+	}
 
-	CPrintToChat(client, "%s You have given %N a key for the %s", m_cPrefix, FindTarget(client, cArgs[0], true), g_eCase[StringToInt(cArgs[1])][Name]);
+	CPrintToChat(client, "%s You have given %N %i key for the %s", m_cPrefix, FindTarget(client, cArgs[0], true), StringToInt(cArgs[2]), g_eCase[StringToInt(cArgs[1])][Name]);
 
 	return Plugin_Handled;
 }
@@ -361,21 +404,43 @@ public Action Command_Loadinv(int client, int args)
 	if(args != 1){
 		LoadPlayerInventory(Jatekos(client));
 		CPrintToChat(client, "%s Your inventory has been fetched.", m_cPrefix);
+	} else {
+		char cArgs[MAX_NAME_LENGTH+1];
+		GetCmdArg(1, cArgs, sizeof(cArgs));
+		if(view_as<Jatekos>(FindTarget(client, cArgs, true)).IsValid)
+		{
+			LoadPlayerInventory(view_as<Jatekos>(FindTarget(client, cArgs, true)));
+			CPrintToChat(client, "%s %N's inventory has been fetched.", m_cPrefix, FindTarget(client, cArgs, true));
+			CPrintToChat(FindTarget(client, cArgs, true), "%s Your inventory has been fetched by an admin.", m_cPrefix);
+		} else {
+			CPrintToChat(client, "%s Invalid target.", m_cPrefix);
+		}
 	}
 
-	char cArgs[MAX_NAME_LENGTH+1];
-	GetCmdArg(1, cArgs, sizeof(cArgs));
-	LoadPlayerInventory(view_as<Jatekos>(FindTarget(client, cArgs, true)));
-	CPrintToChat(client, "%s %N's inventory has been fetched.", m_cPrefix, FindTarget(client, cArgs, true));
+	return Plugin_Handled;
 }
 
 public Action Command_Drop(int client, int args)
 {
-	Jatekos jatekos = view_as<Jatekos>(GetRandomPlayer());
-	int caseid = GetRandomCase();
-	Case_GiveCase(jatekos, caseid);
-	CPrintToChatAll("%s \x04%N \x01has got a \x0B%s \x01as a drop!", m_cPrefix, jatekos.index, g_eCase[caseid][Name]);
-	return Plugin_Continue;
+	int random = GetRandomCasePlayer();
+	if(IsValidClient(random))
+	{
+		int caseid = GetRandomCase();
+		if(caseid != -1)
+		{
+			if(!IsInventoryLoaded(Jatekos(random))) LoadPlayerInventory(Jatekos(random));
+
+			Case_GiveCase(Jatekos(random), caseid);
+			CPrintToChatAll("%s \x04%N \x01has got a \x0B%s \x01as a drop!", m_cPrefix, random, g_eCase[caseid][Name]);
+			PlaySoundToClient(Jatekos(random), "ui/item_drop_personal.wav");
+		} else {
+			CPrintToChat(client, "%s Something happend, Please contact the server owner or the plugin author. \x07ERRCODE: Command_Drop.GetRandomCase(%i)", m_cPrefix, caseid);
+		}
+	} else {
+		CPrintToChat(client, "%s Something happend, Please contact the server owner or the plugin author. \x07ERRCODE: Command_Drop.GetRandomCasePlayer(%i)", m_cPrefix, random);
+	}
+
+	return Plugin_Handled;
 }
 
 public Action Command_BanPlayer(int client, int args)
@@ -406,7 +471,7 @@ public Action Command_BanPlayer(int client, int args)
 
 public void Case_BanPlayer(Jatekos jatekos)
 {
-	char Query[1024];
+	char Query[256];
 	char cSteamID[20];
 	char cPlayerName[MAX_NAME_LENGTH+1];
 
@@ -443,6 +508,7 @@ public void OnClientPostAdminCheck(int client)
 	m_fChance[client] = -1.0;
 	m_bOpening[client] = false;
 	m_bBanned[client] = false;
+	m_iOpenProp[client] = -1;
 
 	for (int i = 1; i < m_iCases; ++i)
 	{
@@ -453,6 +519,15 @@ public void OnClientPostAdminCheck(int client)
 		m_bLoaded[client][Keys] = false;
 	}
 
+	char Query[256];
+	char steamid[20];
+	view_as<Jatekos>(client).GetAuthId(AuthId_Steam2, steamid, sizeof(steamid));
+	Format(Query, sizeof(Query), "SELECT steamid, ID, banned FROM case_players WHERE steamid = '%s';", steamid);
+	SQL_TQuery(g_DB, CheckPlayer, Query, view_as<Jatekos>(client));
+}
+
+public Action Command_RefreshId(int client, int args)
+{
 	char Query[256];
 	char steamid[20];
 	view_as<Jatekos>(client).GetAuthId(AuthId_Steam2, steamid, sizeof(steamid));
@@ -481,10 +556,9 @@ public void CheckPlayer(Handle owner, Handle hndl, const char[] error, Jatekos j
 		Format(Query, sizeof(Query), "INSERT INTO `case_players` (`ID`, `playername`, `steamid`, `banned`) VALUES (NULL, '%s', '%s', '0');", playername, steamid);
 
 		SQL_TQuery(g_DB, SQLHibaKereso, Query);
-		LoadPlayerInventory(jatekos);
-	} else {
-		LoadPlayerInventory(jatekos);
 	}
+
+	LoadPlayerInventory(jatekos);
 }
 
 public void CaseMenu(Jatekos jatekos)
@@ -668,19 +742,135 @@ public void Pre_OpenCase(Jatekos jatekos)
 {
 	if(!(m_iItems[m_iCacheCase[jatekos.index]] > 0))
 	{
-		CPrintToChat(jatekos.index, "%s This case haven't got any item yet.", m_cPrefix);
+		CPrintToChat(jatekos.index, "%s Something happend, Please contact the server owner or the plugin author. \x07ERRCODE: Pre_OpenCase.m_iItems(%i)", m_cPrefix, m_iCacheCase[jatekos.index]);
 		return;
 	}
 
-	m_iSzam[jatekos.index] = 0;
+	if(g_cR[CEnum_PlayAnimation].BoolValue)
+	{
+		if(IsPlayerAlive(jatekos.index))
+		{
+			if(IsClientIsOnGround(jatekos.index) && !IsClientCrouching(jatekos.index)){
+				if(!StrEqual(g_eCase[m_iCacheCase[jatekos.index]][Model], empty)) CaseOpenAnimation(jatekos, m_iCacheCase[jatekos.index]);
+				else CPrintToChat(jatekos.index, "%s Something happend, Please contact the server owner or the plugin author. \x07ERRCODE: Pre_OpenCase.CaseOpenAnimation(%i-%i-%s)", m_cPrefix, m_iCacheCase[jatekos.index], m_iPlayerID[jatekos.index], g_eCase[m_iCacheCase[jatekos.index]][Model]);
+			} else CPrintToChat(jatekos.index, "%s You must stand on the ground to open a case.", m_cPrefix);
+		} else if(!IsPlayerAlive(jatekos.index))
+		{
+			StartTimer(jatekos, false);
+		}
+	} else {
+		StartTimer(jatekos, false);
+	}
+
+
+	Call_StartForward(Forwards[OnStartOpening]);
+	Call_PushCell(jatekos.index);
+	Call_PushString(g_eCase[m_iCacheCase[jatekos.index]][Model]);
+	Call_Finish();
+}
+
+public Action OpenSound(Handle timer, Jatekos jatekos)
+{
+	if(!m_bOpening[jatekos.index]) return Plugin_Stop;
+	if(g_cR[CEnum_MustBeClose].BoolValue)
+	{
+		if(GetEntitiesDistance(jatekos.index, m_iOpenProp[jatekos.index]) <= g_cR[CEnum_Distance].FloatValue)
+		{
+			if(g_cR[CEnum_MustLookAt].BoolValue)
+			{
+				if(IsClientLookingAtCase(jatekos))
+				{
+					PlaySoundToClient(jatekos, "steelclouds/lada/porgetes.mp3");
+				}
+			} else {
+				PlaySoundToClient(jatekos, "steelclouds/lada/porgetes.mp3");
+			}
+		}
+	} else {
+		PlaySoundToClient(jatekos, "steelclouds/lada/porgetes.mp3");
+	}
+
+	return Plugin_Continue;
+}
+
+public Action DelayOpenSound(Handle timer, Jatekos jatekos)
+{
+	CreateTimer(0.25, OpenSound, jatekos, TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
+}
+
+public void CaseOpenAnimation(Jatekos jatekos, int caseid)
+{
+	int prop = CreateEntityByName("prop_dynamic_override");
+	if (IsValidEntity(prop) && prop != -1)
+	{
+		float fPos[3], fAng[3];
+		jatekos.GetAbsOrigin(fPos);
+		jatekos.GetEyeAngle(fAng);
+	    DispatchKeyValue(prop, "model", g_eCase[caseid][Model]);
+	    ActivateEntity(prop);
+	    DispatchSpawn(prop);
+
+	    fPos[0] = fPos[0]+(50*(Sine(DegToRad(fAng[0]))));
+	    fPos[1] = fPos[1]+(50*(Sine(DegToRad(fAng[1]))));
+	    fAng[0] = 0.0;
+	    fAng[1] += 90;
+
+	    TeleportEntity(prop, fPos, fAng, NULL_VECTOR);
+
+	    PlaySoundToClient(jatekos, "ui/panorama/case_drop_01.wav");
+	    SetVariantString("fall");
+	    AcceptEntityInput(prop, "SetAnimation");
+	    AcceptEntityInput(prop, "Enable");
+
+	    HookSingleEntityOutput(prop, "OnAnimationDone", Case_OnAnimationDone, true);
+
+	    m_iOpenProp[jatekos.index] = prop;
+	}
+}
+
+public void Case_OnAnimationDone(const char[] output, int caller, int activator, float delay) 
+{
+	if(IsValidEntity(caller))
+	{
+		SetVariantString("open");
+		AcceptEntityInput(caller, "SetAnimation");
+		PlaySoundToClient(view_as<Jatekos>(GetPlayerFromOpenEntity(caller)), "steelclouds/lada/case_unlock");
+		CreateTimer(2.0, DelayOpenCase, view_as<Jatekos>(GetPlayerFromOpenEntity(caller)), TIMER_FLAG_NO_MAPCHANGE);
+	}
+}
+
+public Action DelayOpenCase(Handle timer, Jatekos jatekos)
+{
+	StartTimer(jatekos, true);
+	PlaySoundToClient(jatekos, "ui/csgo_ui_crate_open.wav");
+}
+
+public void StartTimer(Jatekos jatekos, bool delay)
+{
 	m_bOpening[jatekos.index] = true;
+	m_iSzam[jatekos.index] = 0;
+
 	ManagePlayerInventory(jatekos);
-	CreateTimer(0.1, OpenCase, jatekos, TIMER_REPEAT);
+
+	if(delay) CreateTimer(0.35, DelayOpenSound, jatekos);
+	else CreateTimer(0.2, OpenSound, jatekos, TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
+	CreateTimer(0.1, OpenCase, jatekos, TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
+}
+
+public Action KillProp(Handle timer, Jatekos jatekos)
+{
+	if(IsValidEntity(m_iOpenProp[jatekos.index])) RemovePlayerCaseProp(m_iOpenProp[jatekos.index]);
+}
+
+public void RemovePlayerCaseProp(int prop)
+{
+	AcceptEntityInput(prop, "kill");
+	m_iOpenProp[GetPlayerFromOpenEntity(prop)] = -1;
 }
 
 public Action OpenCase(Handle timer, Jatekos jatekos)
 {
-	if(!jatekos.IsValid)
+	if(!jatekos.IsValid || !m_bOpening[jatekos.index])
 		return Plugin_Stop;
 
 	if(m_fChance[jatekos.index] == -1.0) m_fChance[jatekos.index] = GetRandomFloat(GetLowestItemChance(m_iCacheCase[jatekos.index]), GetHighestItemChance(m_iCacheCase[jatekos.index]));
@@ -703,8 +893,30 @@ public Action OpenCase(Handle timer, Jatekos jatekos)
 
 		if(ProcessItem(jatekos, m_iCacheCase[jatekos.index], g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Type], g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Value]) != -1)
 		{
-			if(GetGrade(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade]) != -1) PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade])][rColor], g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Name]);
-			else {
+			if(GetGrade(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade]) != -1)
+			{
+				if(g_cR[CEnum_PlayAnimation].BoolValue)
+				{
+					if(IsPlayerAlive(jatekos.index))
+					{
+						if(g_cR[CEnum_MustBeClose].BoolValue)
+						{
+							if(IsPlayerAlive(jatekos.index) && GetEntitiesDistance(jatekos.index, m_iOpenProp[jatekos.index]) <= g_cR[CEnum_Distance].FloatValue){
+								if(g_cR[CEnum_MustLookAt].BoolValue)
+								{
+									if(IsClientLookingAtCase(jatekos)) PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade])][rColor], g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Name]);
+								} else PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade])][rColor], g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Name]);
+							}
+						} else {
+							PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade])][rColor], g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Name]);
+						}
+					} else {
+						PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade])][rColor], g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Name]);
+					}
+				} else {
+					PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade])][rColor], g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Name]);
+				}
+			} else {
 				CPrintToChat(jatekos.index, "%s Something happend while we tried to get the item grade. Please contact the server owner or the plugin author. \x07ERRCODE: fOpenCase.ProcessItem.GetGrade(%i-%i-%i-%i)", m_cPrefix, m_iOpenedItem[jatekos.index], m_iCacheCase[jatekos.index], m_iPlayerID[jatekos.index], GetGrade(g_eItem[m_iCacheCase[jatekos.index]][m_iOpenedItem[jatekos.index]][Grade]));
 				ManagePlayerInventory(jatekos, false);
 			}
@@ -727,12 +939,40 @@ public Action OpenCase(Handle timer, Jatekos jatekos)
 		m_iSzam[jatekos.index] = 0;
 		m_iOpenedItem[jatekos.index] = -1;
 		m_bOpening[jatekos.index] = false;
+
+		CreateTimer(1.5, KillProp, jatekos);
 		return Plugin_Stop;
 	}
 
 	if(!StrEqual(g_eItem[m_iCacheCase[jatekos.index]][randomszam][Name], empty)) {
-		if(GetGrade(g_eItem[m_iCacheCase[jatekos.index]][randomszam][Grade]) != -1) PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][randomszam][Grade])][rColor], g_eItem[m_iCacheCase[jatekos.index]][randomszam][Name]);
-		else {
+		if(GetGrade(g_eItem[m_iCacheCase[jatekos.index]][randomszam][Grade]) != -1) {
+			if(g_cR[CEnum_PlayAnimation].BoolValue)
+			{
+				if(IsPlayerAlive(jatekos.index))
+				{
+					if(g_cR[CEnum_MustBeClose].BoolValue)
+					{
+						if(GetEntitiesDistance(jatekos.index, m_iOpenProp[jatekos.index]) <= g_cR[CEnum_Distance].FloatValue){
+							if(g_cR[CEnum_MustLookAt].BoolValue)
+							{
+								if(IsClientLookingAtCase(jatekos))
+								{
+									PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][randomszam][Grade])][rColor], g_eItem[m_iCacheCase[jatekos.index]][randomszam][Name]);
+								}
+							} else {
+								PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][randomszam][Grade])][rColor], g_eItem[m_iCacheCase[jatekos.index]][randomszam][Name]);
+							}
+						}
+					} else {
+						PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][randomszam][Grade])][rColor], g_eItem[m_iCacheCase[jatekos.index]][randomszam][Name]);
+					}
+				} else {
+					PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][randomszam][Grade])][rColor], g_eItem[m_iCacheCase[jatekos.index]][randomszam][Name]);
+				}
+			} else {
+				PrintHintText(jatekos.index, "<span class='fontSize-xl'><big><u><b><font color='#00CCFF'>›› <font color='%s'>%s</font> ‹‹</font></b></u></big></span>", g_eGrade[GetGrade(g_eItem[m_iCacheCase[jatekos.index]][randomszam][Grade])][rColor], g_eItem[m_iCacheCase[jatekos.index]][randomszam][Name]);
+			}
+		} else {
 			CPrintToChat(jatekos.index, "%s Something happend while we tried to get the item grade. Please contact the server owner or the plugin author. \x07ERRCODE: fOpenCase.GetGrade(%i-%i-%i-%i)", m_cPrefix, randomszam, m_iCacheCase[jatekos.index], m_iPlayerID[jatekos.index], GetGrade(g_eItem[m_iCacheCase[jatekos.index]][randomszam][Grade]));
 			ManagePlayerInventory(jatekos, false);
 
@@ -740,6 +980,8 @@ public Action OpenCase(Handle timer, Jatekos jatekos)
 			m_iSzam[jatekos.index] = 0;
 			m_iOpenedItem[jatekos.index] = -1;
 			m_bOpening[jatekos.index] = false;
+
+			CreateTimer(1.5, KillProp, jatekos);
 			return Plugin_Stop;
 		}
 	}
@@ -785,7 +1027,7 @@ stock void ManagePlayerInventory(Jatekos jatekos, bool del = true)
 {
 	if(!jatekos.IsValid) return;
 
-	char Query[1024];
+	char Query[256];
 
 	if(del)
 	{
@@ -813,7 +1055,7 @@ public Action Event_EndMatch(Event event, const char[] name, bool dontBroadcast)
 	{
 		if(GetRandomInt(0, 100) <= g_cR[CEnum_DropChance].IntValue)
 		{
-			CreateTimer(g_cR[CEnum_DropDelay].FloatValue, Case_DropEvent, view_as<Jatekos>(GetRandomPlayer()), TIMER_FLAG_NO_MAPCHANGE);
+			CreateTimer(g_cR[CEnum_DropDelay].FloatValue, Case_DropEvent, view_as<Jatekos>(GetRandomCasePlayer()), TIMER_FLAG_NO_MAPCHANGE);
 		} else {
 			CPrintToChatAll("%s There will be no drop for now.", m_cPrefix);
 		}
@@ -824,16 +1066,27 @@ public Action Event_EndMatch(Event event, const char[] name, bool dontBroadcast)
 
 public Action Case_DropEvent(Handle timer, Jatekos jatekos)
 {
-	int caseid = GetRandomCase();
-	Case_GiveCase(jatekos, caseid);
-	CPrintToChatAll("%s \x04%N has got a %s as a drop!", m_cPrefix, jatekos.index, g_eCase[caseid][Name]);
-	PlaySoundToClient(jatekos, m_cDropSound);
+	if(jatekos.IsValid)
+	{
+		int caseid = GetRandomCase();
+		if(caseid != -1)
+		{
+			Case_GiveCase(jatekos, caseid);
+			CPrintToChatAll("%s \x04%N \x01has got a \x0B%s \x01as a drop!", m_cPrefix, jatekos.index, g_eCase[caseid][Name]);
+			PlaySoundToClient(jatekos, "ui/item_drop_personal.wav");
+		} else {
+			CPrintToChat(jatekos.index, "%s Something happend, Please contact the server owner or the plugin author. \x07ERRCODE: Case_DropEvent.GetRandomCase(%i)", m_cPrefix, caseid);
+		}
+	} else {
+		CPrintToChatAll("%s Something happend, Please contact the server owner or the plugin author. \x07ERRCODE: Case_DropEvent.GetRandomCasePlayer(%i)", m_cPrefix, jatekos.index);
+	}
+
 	return Plugin_Continue;
 }
 
 public void Case_GiveCase(Jatekos jatekos, int caseid)
 {
-	char Query[1024];
+	char Query[256];
 	if(caseid < 1) caseid = 1;
 	Format(Query, sizeof(Query), "INSERT INTO `case_inventory` (`ID`, `unique_id`, `type`, `caseid`) VALUES (NULL, '%i', 'case', '%i');", m_iPlayerID[jatekos.index], caseid);
 	SQL_TQuery(g_DB, SQLHibaKereso, Query);
@@ -941,6 +1194,13 @@ public void OnConfigsExecuted()
 
 	m_fOffsetZ = g_cR[CEnum_OffsetFloat].FloatValue;
 	g_cR[CEnum_ChatPrefix].GetString(m_cPrefix, sizeof(m_cPrefix));
+
+	for (int i = 1; i <= MaxClients; ++i)
+	{
+		if(!IsValidClient(i)) continue;
+
+		OnClientPostAdminCheck(i);
+	}
 }
 
 public void SQL_LoadCases()
@@ -997,6 +1257,7 @@ public void GetItemsFromDB(Handle owner, Handle hndl, const char[] error, int ca
 public void GetGradesFromDB(Handle owner, Handle hndl, const char[] error, any data)
 {
 	while (SQL_FetchRow(hndl)) {
+		if(m_iGrades == MAX_GRADES) return;
 		SQL_FetchString(hndl, 1, g_eGrade[m_iGrades][g_uName], 32);
 		SQL_FetchString(hndl, 2, g_eGrade[m_iGrades][cColor], 12);
 		SQL_FetchString(hndl, 3, g_eGrade[m_iGrades][rColor], 12);
@@ -1166,6 +1427,7 @@ public void Case_OnStartTouch(const char[] output, int caller, int activator, fl
 		char cPlayerName[MAX_NAME_LENGTH+1];
 		jatekos.GetName(cPlayerName, sizeof(cPlayerName));
 		CPrintToChatAll("%s %s has picked up a %s!", m_cPrefix, cPlayerName, g_eCase[m_iCaseItemId[0]][Name]);
+		PlaySoundToClient(jatekos, "steelclouds/lada/lada.mp3");
 	}
 }
 
@@ -1467,6 +1729,44 @@ public void SQLHibaKereso(Handle owner, Handle hndl, const char[] error, any dat
 		LogError(error);
 }
 
+public int Native_GiveCase(Handle plugin, int params)
+{
+	if(!view_as<Jatekos>(GetNativeCell(1)).IsValid) return ThrowNativeError(SP_ERROR_NATIVE, "Invalid target (%i)", view_as<Jatekos>(GetNativeCell(1)).index);
+	if(!IsValidCase(GetNativeCell(2))) return ThrowNativeError(SP_ERROR_NATIVE, "Invalid case id (%i)", GetNativeCell(2));
+	if(GetNativeCell(3) > 100 || GetNativeCell(3) <= 0) return ThrowNativeError(SP_ERROR_NATIVE, "Invalid amount (%i)", GetNativeCell(3));
+	if(m_iPlayerID[view_as<Jatekos>(GetNativeCell(1)).index] <= 0) return ThrowNativeError(SP_ERROR_NATIVE, "The targeted player haven't got ID (%i)", view_as<Jatekos>(GetNativeCell(1)).index);
+	if(!IsInventoryLoaded(view_as<Jatekos>(GetNativeCell(1)))) return ThrowNativeError(SP_ERROR_NATIVE, "The targeted player inventory isn't fetched (%i)", view_as<Jatekos>(GetNativeCell(1)).index);
+
+	char Query[256];
+	Format(Query, sizeof(Query), "INSERT INTO `case_inventory` (`ID`, `unique_id`, `type`, `caseid`) VALUES (NULL, '%i', 'case', '%i');", m_iPlayerID[view_as<Jatekos>(GetNativeCell(1)).index], GetNativeCell(2));
+	
+	for (int i = 0; i < GetNativeCell(3); ++i)
+	{
+		SQL_TQuery(g_DB, SQLHibaKereso, Query);
+	}
+
+	return 1;
+}
+
+public int Native_GiveKey(Handle plugin, int params)
+{
+	if(!view_as<Jatekos>(GetNativeCell(1)).IsValid) return ThrowNativeError(SP_ERROR_NATIVE, "Invalid target (%i)", view_as<Jatekos>(GetNativeCell(1)).index);
+	if(!IsValidCase(GetNativeCell(2))) return ThrowNativeError(SP_ERROR_NATIVE, "Invalid case id (%i)", GetNativeCell(2));
+	if(GetNativeCell(3) > 100 || GetNativeCell(3) <= 0) return ThrowNativeError(SP_ERROR_NATIVE, "Invalid amount (%i)", GetNativeCell(3));
+	if(m_iPlayerID[view_as<Jatekos>(GetNativeCell(1)).index] <= 0) return ThrowNativeError(SP_ERROR_NATIVE, "The targeted player haven't got ID (%i)", view_as<Jatekos>(GetNativeCell(1)).index);
+	if(!IsInventoryLoaded(view_as<Jatekos>(GetNativeCell(1)))) return ThrowNativeError(SP_ERROR_NATIVE, "The targeted player inventory isn't fetched (%i)", view_as<Jatekos>(GetNativeCell(1)).index);
+
+	char Query[256];
+	Format(Query, sizeof(Query), "INSERT INTO `case_inventory` (`ID`, `unique_id`, `type`, `caseid`) VALUES (NULL, '%i', 'key', '%i');", m_iPlayerID[view_as<Jatekos>(GetNativeCell(1)).index], GetNativeCell(2));
+	
+	for (int i = 0; i < GetNativeCell(3); ++i)
+	{
+		SQL_TQuery(g_DB, SQLHibaKereso, Query);
+	}
+
+	return 1;
+}
+
 stock int GetCaseIdFromUnique(char[] unique)
 {
 	for (int i = 1; i < m_iCases; ++i)
@@ -1519,6 +1819,24 @@ stock int GetSpawnedItemIdFromUnique(char[] unique)
 	return -1;
 }
 
+stock int GetRandomCasePlayer()
+{
+	int[] jatekosok = new int[MaxClients+1];
+	int jatekosszam = 0;
+
+	for(int i = 1; i <= MaxClients; i++)
+	{
+	    if(!IsValidClient(i)) continue;
+	    if(IsBanned(view_as<Jatekos>(i))) continue;
+
+		jatekosok[jatekosszam++] = i;
+	}
+
+	if(jatekosszam > 0) return jatekosok[GetRandomInt(0, jatekosszam - 1)];
+
+	return -1;
+}
+
 stock int GetGrade(char[] grade)
 {
 	for (int i = 0; i < m_iGrades; ++i)
@@ -1563,19 +1881,19 @@ stock float GetLowestItemChance(int caseid)
 
 stock int GetRandomCase()
 {
-	int cases[MAX_CASES];
-	int casecount;
-	int randomcase;
+	int cases[MAX_CASES+1];
+	int casecount = 0;
 
-	for(int i=0; i<=MAX_CASES; i++)
+	for(int i = 1; i <= m_iCases; i++)
 	{
 	    if(!IsValidCase(i)) continue;
 
-	    cases[casecount++] = i;
+	    cases[casecount++] = GetCaseIdFromUnique(g_eCase[i][Unique_ID]);
 	}
 
-	randomcase = cases[GetRandomInt(0, casecount-1)];
-	return randomcase;
+	if(casecount > 0) return cases[GetRandomInt(0, casecount - 1)];
+
+	return -1;
 }
 
 stock int VerifyCaseItems(int caseid)
@@ -1597,7 +1915,7 @@ stock bool IsOpening(Jatekos jatekos)
 
 stock bool IsValidCase(int caseid)
 {
-	if(!StrEqual(g_eCase[caseid][Name], empty) && !StrEqual(g_eCase[caseid][Unique_ID], empty) && g_eCase[caseid][mCaseID] > 0) return true;
+	if(!StrEqual(g_eCase[caseid][Name], empty) && !StrEqual(g_eCase[caseid][Unique_ID], empty) && g_eCase[caseid][mCaseID] > 0 && caseid > 0 && caseid < MAX_CASES) return true;
 
 	return false;
 }
@@ -1605,6 +1923,12 @@ stock bool IsValidCase(int caseid)
 stock bool IsBanned(Jatekos jatekos)
 {
 	return m_bBanned[jatekos.index];
+}
+
+stock bool IsClientLookingAtCase(Jatekos jatekos)
+{
+	if(GetClientAimTarget(jatekos.index, false) == m_iOpenProp[jatekos.index]) return true;
+	return false;
 }
 
 stock bool IsInventoryLoaded(Jatekos jatekos)
@@ -1616,4 +1940,16 @@ public bool SpawnLight(int entity, int mask, any data) {
 	if (entity == data) return false;
 
 	return true;
+}
+
+stock int GetPlayerFromOpenEntity(int entity)
+{
+	for (int i = 1; i <= MaxClients; ++i)
+	{
+		if(!IsValidClient(i)) continue;
+
+		if(m_iOpenProp[i] == entity) return i;
+	}
+
+	return -1;
 }
