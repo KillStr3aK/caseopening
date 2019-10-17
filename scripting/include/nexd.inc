@@ -565,6 +565,10 @@ stock GetEntityModel(int entity, char[] Buffer, int length)
 
 stock int NullMenuHandler(Handle menu, MenuAction action, int param1, int param2) 
 {
+	if(action == MenuAction_End)
+	{
+		delete menu;
+	}
 }
 
 stock GetPercent(number, count) 
