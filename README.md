@@ -1,4 +1,4 @@
-## caseopening 1.0.1016pre
+## caseopening 1.0.1023pre
 
 # Before asking "how-to" questions, please take a look on the wiki: https://github.com/KillStr3aK/caseopening/wiki
 
@@ -17,6 +17,8 @@
 * **sm_loadinv** - Load inventory for the given player
 * **sm_givekey** - Give key to a player
 * **sm_givecase** - Give case to a player
+* **sm_givekeyall** - Give key to every player
+* **sm_givecaseall** - Give case to every player
 
 Youtube:
 [![Caseopening](https://media.giphy.com/media/13Nc3xlO1kGg3S/giphy-facebook_s.jpg)](https://www.youtube.com/watch?v=4AJx2e54Fws)
