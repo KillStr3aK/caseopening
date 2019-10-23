@@ -16,7 +16,7 @@ public void GiveStoreItemForSteamId(Handle owner, Handle hndl, const char[] erro
 		pack.ReadString(cUniqueIdValue, sizeof(cUniqueIdValue));
 
 		char Query[256];
-		Format(Query, sizeof(Query), "INSERT INTO `store_items` (`id`, `player_id`, `type`, `unique_id`) VALUES (NULL, '%i', '%s', '%s');", m_iStoreId, cTypeValue, cUniqueIdValue);
+		Format(Query, sizeof(Query), "INSERT INTO `store_items` (`id`, `player_id`, `type`, `unique_id`, `date_of_purchase`, `date_of_expiration`, `price_of_purchase`) VALUES (NULL, '%i', '%s', '%s', '0', '0', '0');", m_iStoreId, cTypeValue, cUniqueIdValue);
 
 		SQL_TQuery(g_DB, SQLHibaKereso, Query);
 

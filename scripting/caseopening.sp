@@ -6,7 +6,7 @@
 #define PLUGIN_NEV	"Caseopening system"
 #define PLUGIN_LERIAS	"(8_8)"
 #define PLUGIN_AUTHOR	"Nexd"
-#define PLUGIN_VERSION	"1.0.1016pre"
+#define PLUGIN_VERSION	"1.0.1023pre"
 #define PLUGIN_URL	"https://github.com/KillStr3aK"
 
 #define MAX_CASES 32
@@ -142,6 +142,8 @@ ConVar g_cR[Count];
 #include "case_modules/store_lasersight.sp"
 #include "case_modules/store_grenadetrails.sp"
 #include "case_modules/store_grenadeskin.sp"
+#include "case_modules/store_arms.sp"
+#include "case_modules/store_levelicons.sp"
 
 #pragma newdecls required;
 
@@ -167,6 +169,9 @@ public void OnPluginStart()
 
 	RegAdminCmd("sm_givekey", Command_GiveKey, ADMFLAG_ROOT);
 	RegAdminCmd("sm_givecase", Command_GiveCase, ADMFLAG_ROOT);
+
+	RegAdminCmd("sm_givekeyall", Command_GiveKeyAll, ADMFLAG_ROOT);
+	RegAdminCmd("sm_givecaseall", Command_GiveCaseAll, ADMFLAG_ROOT);
 
 	g_cR[CEnum_Config] = CreateConVar("case_database", "ladarendszer", "databases.cfg section name");
 	g_cR[CEnum_Debug] = CreateConVar("case_debug", "0", "debug mode");
@@ -205,6 +210,8 @@ public void OnPluginStart()
 	StoreLaserSightOnPluginStart();
 	StoreGrenadeTrailOnPluginStart();
 	StoreGrenadeSkinOnPluginStart();
+	StoreArmsOnPluginStart(); // requires https://forums.alliedmods.net/showthread.php?p=2467731
+	StoreIconOnPluginStart(); // requires https://forums.alliedmods.net/showthread.php?t=319182
 }
 
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
@@ -340,6 +347,96 @@ public Action Command_GiveCase(int client, int args)
 	}
 
 	CPrintToChat(client, "%s You have given %N %i %s", m_cPrefix, FindTarget(client, cArgs[0], true), StringToInt(cArgs[2]), g_eCase[StringToInt(cArgs[1])][Name]);
+
+	return Plugin_Handled;
+}
+
+public Action Command_GiveCaseAll(int client, int args)
+{
+	if(args != 2)
+	{
+		CPrintToChat(client, "%s Usage: !givecaseall caseid amount(1-100)", m_cPrefix);
+		return Plugin_Handled;
+	}
+
+	char cArgs[2][MAX_NAME_LENGTH+1];
+	GetCmdArg(1, cArgs[0], sizeof(cArgs[]));
+	GetCmdArg(2, cArgs[1], sizeof(cArgs[]));
+
+	if(!IsValidCase(StringToInt(cArgs[0])))
+	{
+		CPrintToChat(client, "%s Invalid case", m_cPrefix);
+		return Plugin_Handled;
+	}
+
+	if(StringToInt(cArgs[0]) > 100 || StringToInt(cArgs[0]) <= 0)
+	{
+		CPrintToChat(client, "%s Invalid amount (%i)", m_cPrefix, StringToInt(cArgs[0]));
+		return Plugin_Handled;
+	}
+
+	char Query[256];
+
+	for (int k = 1; k <= MaxClients; ++k)
+	{
+		if(!IsValidClient(k)) continue;
+		if(m_iPlayerID[k] <= 0) continue;
+		if(!IsInventoryLoaded(view_as<Jatekos>(k))) continue;
+
+		Format(Query, sizeof(Query), "INSERT INTO `case_inventory` (`ID`, `unique_id`, `type`, `caseid`) VALUES (NULL, '%i', 'case', '%i');", m_iPlayerID[k], StringToInt(cArgs[0]));
+	
+		for (int i = 0; i < StringToInt(cArgs[0]); ++i)
+		{
+			SQL_TQuery(g_DB, SQLHibaKereso, Query);
+		}
+
+		CPrintToChat(k, "%s You have given %N %i %s", m_cPrefix, k, StringToInt(cArgs[1]), g_eCase[StringToInt(cArgs[0])][Name]);
+	}
+
+	return Plugin_Handled;
+}
+
+public Action Command_GiveKeyAll(int client, int args)
+{
+	if(args != 2)
+	{
+		CPrintToChat(client, "%s Usage: !givekeyall caseid amount(1-100)", m_cPrefix);
+		return Plugin_Handled;
+	}
+
+	char cArgs[2][MAX_NAME_LENGTH+1];
+	GetCmdArg(1, cArgs[0], sizeof(cArgs[]));
+	GetCmdArg(2, cArgs[1], sizeof(cArgs[]));
+
+	if(!IsValidCase(StringToInt(cArgs[0])))
+	{
+		CPrintToChat(client, "%s Invalid case", m_cPrefix);
+		return Plugin_Handled;
+	}
+
+	if(StringToInt(cArgs[0]) > 100 || StringToInt(cArgs[0]) <= 0)
+	{
+		CPrintToChat(client, "%s Invalid amount (%i)", m_cPrefix, StringToInt(cArgs[0]));
+		return Plugin_Handled;
+	}
+
+	char Query[256];
+
+	for (int k = 1; k <= MaxClients; ++k)
+	{
+		if(!IsValidClient(k)) continue;
+		if(m_iPlayerID[k] <= 0) continue;
+		if(!IsInventoryLoaded(view_as<Jatekos>(k))) continue;
+
+		Format(Query, sizeof(Query), "INSERT INTO `case_inventory` (`ID`, `unique_id`, `type`, `caseid`) VALUES (NULL, '%i', 'key', '%i');", m_iPlayerID[k], StringToInt(cArgs[0]));
+	
+		for (int i = 0; i < StringToInt(cArgs[0]); ++i)
+		{
+			SQL_TQuery(g_DB, SQLHibaKereso, Query);
+		}
+
+		CPrintToChat(k, "%s You have given %N %i key for the %s", m_cPrefix, k, StringToInt(cArgs[1]), g_eCase[StringToInt(cArgs[0])][Name]);
+	}
 
 	return Plugin_Handled;
 }
@@ -652,7 +749,11 @@ stock void CaseDetailsMenu(Jatekos jatekos, int caseid)
 		menu.AddItem("", g_eItem[m_iCacheCase[jatekos.index]][i][Name], ITEMDRAW_DISABLED);
 	}*/
 	menu.AddItem("", "", ITEMDRAW_SPACER);
-	if(PlayerInventory[jatekos.index][caseid][Cases] >= 1 && PlayerInventory[jatekos.index][caseid][Keys] >= 1) menu.AddItem("open", "Open case");
+	if(g_eCase[caseid][bReqKey]){
+		if(PlayerInventory[jatekos.index][caseid][Cases] >= 1 && PlayerInventory[jatekos.index][caseid][Keys] >= 1) menu.AddItem("open", "Open case");
+	} else if(PlayerInventory[jatekos.index][caseid][Cases] >= 1){
+		if(PlayerInventory[jatekos.index][caseid][Cases] >= 1) menu.AddItem("open", "Open case");
+	}
 	else menu.AddItem("", "Open case", ITEMDRAW_DISABLED);
 	menu.AddItem("", "", ITEMDRAW_SPACER);
 	menu.AddItem("back", "Back");
@@ -761,7 +862,6 @@ public void Pre_OpenCase(Jatekos jatekos)
 	} else {
 		StartTimer(jatekos, false);
 	}
-
 
 	Call_StartForward(Forwards[OnStartOpening]);
 	Call_PushCell(jatekos.index);

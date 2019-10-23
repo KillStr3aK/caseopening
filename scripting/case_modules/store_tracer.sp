@@ -6,7 +6,8 @@ public void StoreTracerOnPluginStart()
 public void TracerOpened(Jatekos jatekos, char[] tracer)
 {
 	char authid[20];
-	GetLegacyAuthString(jatekos.index, authid, sizeof(authid));
+	jatekos.GetAuthId(AuthId_Steam2, authid, sizeof(authid));
+	if (StrContains(authid, "STEAM_") != -1) strcopy(authid, sizeof(authid), authid[8]);
 
 	char Query[1024];
 	Format(Query, sizeof(Query), "SELECT id FROM store_players WHERE authid = '%s'", authid);

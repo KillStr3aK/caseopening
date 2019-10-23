@@ -1,9 +1,9 @@
-public void StoreAuraOnPluginStart()
+public void StoreArmsOnPluginStart()
 {
-	Case_RegisterModule("store.aura", false, AuraOpened);
+	Case_RegisterModule("store.arms", false, ArmsOpened);
 }
 
-public void AuraOpened(Jatekos jatekos, char[] aura)
+public void ArmsOpened(Jatekos jatekos, char[] arms)
 {
 	char authid[20];
 	jatekos.GetAuthId(AuthId_Steam2, authid, sizeof(authid));
@@ -13,8 +13,8 @@ public void AuraOpened(Jatekos jatekos, char[] aura)
 	Format(Query, sizeof(Query), "SELECT id FROM store_players WHERE authid = '%s'", authid);
 
 	DataPack things = new DataPack();
-	things.WriteString("CustomParticles");
-	things.WriteString(aura)
+	things.WriteString("arms");
+	things.WriteString(arms)
 
 	SQL_TQuery(g_DB, GiveStoreItemForSteamId, Query, things);
 }

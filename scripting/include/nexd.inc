@@ -2,7 +2,7 @@
   #endinput 
 #endif 
 #define _nexd_included_
-#define PREFIX "\x01[\x0BRendszer\x01]" //Used for my things, change it if you want
+//#define PREFIX "\x01[\x0BRendszer\x01]" //Used for my things, change it if you want
 #define empty "\0"
 #define m_iMaxVelocity 9999999.0
 #define MAX_WEAPONS 48
@@ -383,7 +383,7 @@ stock bool IsWarmup()
 
 stock int GetRandomPlayer()
 {
-	new jatekosok[MaxClients+1];
+	int[] jatekosok = new int[MaxClients+1];
 	int jatekosszam;
 	int randomjatekos;
 
@@ -565,6 +565,10 @@ stock GetEntityModel(int entity, char[] Buffer, int length)
 
 stock int NullMenuHandler(Handle menu, MenuAction action, int param1, int param2) 
 {
+	if(action == MenuAction_End)
+	{
+		delete menu;
+	}
 }
 
 stock GetPercent(number, count) 
