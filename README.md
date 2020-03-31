@@ -1,4 +1,5 @@
 ## caseopening 1.0.1023pre
+### THIS VERSION IS OUTDATED, ATLEAST FOR NOW. IF YOU'RE INTERESTED ABOUT THE PRIVATE VERSION WITH ALOT OF UPDATES, FIXES AND NEW MODULES CONTACT ME!
 
 # Before asking "how-to" questions, please take a look on the wiki: https://github.com/KillStr3aK/caseopening/wiki
 
